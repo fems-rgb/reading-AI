@@ -45,7 +45,8 @@ class LocalLLM:
     def enabled(self) -> bool:
         return self.settings.llm_mode == "http"
 
-    def chat_json(self, system: str, user: str, temperature: float = 0.2):
+    def chat_json(self, system: str, user: str, temperature: float = 0.2, json_mode: bool = True):
+        """json_mode=True 时开 grammar 约束的 object 模式；A10 要数组就关掉，靠 _extract_json 抠。"""
         if not self.enabled:
             raise LLMError("未启用本地 LLM（LLM_MODE=stub）")
         payload = json.dumps(
@@ -56,7 +57,8 @@ class LocalLLM:
                     {"role": "user", "content": user},
                 ],
                 "temperature": temperature,
-                "response_format": {"type": "json_object"},
+                "max_tokens": self.settings.llm_max_tokens,
+                **({"response_format": {"type": "json_object"}} if json_mode else {}),
             }
         ).encode("utf-8")
         request = urllib.request.Request(

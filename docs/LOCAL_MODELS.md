@@ -1,8 +1,56 @@
-# 接入园内本地模型（把 stub 换成 http）
+# 接入园内本地模型（单机直跑 / 园内 GPU 集群两种）
 
-系统默认 `*_MODE=stub`，用确定性规则跑通全部流程，**不访问外网**。
-真实部署时把 `.env` 里的模式改成 `http`，指向园内 GPU 机器即可，上层编排、A11 自检、
-界面都不需要改一行代码。
+系统支持三种模式（`.env` 里的 `OCR_MODE / VLM_MODE / LLM_MODE / ASR_MODE / TTS_MODE`）：
+
+| 模式 | 含义 | 典型用法 |
+| --- | --- | --- |
+| `local` | 引擎在应用进程内跑 | RapidOCR（文字）、faster-whisper（童声）、SAPI（语音） |
+| `http` | 园内 OpenAI 兼容 / 自定义 HTTP 服务 | 本机 Ollama、园内 vLLM 集群 |
+| `stub` | 确定性规则，不调模型 | 仅测试与降级；有一个 stub 就标“演示模式” |
+
+## 0. 单机直跑（推荐的园内部署）
+
+一台 8G 显存的 Windows 电脑即可，安装脚本会全部弄好：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
+```
+
+对应的 `.env`（脚本自动生成，与下面一致）：
+
+```ini
+OCR_MODE=local
+ASR_MODE=local
+TTS_MODE=local
+LLM_MODE=http
+VLM_MODE=http
+LLM_URL=http://127.0.0.1:11434/v1
+LLM_MODEL=qwen2.5:3b
+VLM_URL=http://127.0.0.1:11434/v1
+VLM_MODEL=qwen2.5vl:3b
+ASR_MODEL=small
+ASR_MODEL_DIR=models/whisper
+```
+
+实测（RTX 5060 Laptop 8G，普通开发机；数据来自 `_tools/live_smoke.py` 与真实 USB 摄像头实拍）：
+
+| 环节 | 引擎 | 单次耗时 | 说明 |
+| --- | --- | --- | --- |
+| A1 文字识别 | RapidOCR（CPU） | ≈2-3s | 中文绘本合成页全对；与 A2 并行，实拍页合计 ≈7.9s |
+| A2 看图 | qwen2.5vl:3b（Ollama） | 首次加载后 3-8s | 输出 characters/objects/scene；空白页会返回空数组，不编造 |
+| A3/A4/A7/A10 | qwen2.5:3b（Ollama） | 0.3-0.6s | `response_format=json_object` + 提示词内 JSON 示例；输出全中文 |
+| A5 语音合成 | Windows SAPI（Huihui） | ≈0.8s | 系统自带，不占显卡 |
+| A6 童声识别 | faster-whisper small int8（CPU） | ≈1.5-5s | ffmpeg 转 16k 单声道 |
+
+实拍一页的端到端耗时 ≈11.2s（质量门 + A1‖A2 + A3 + A4 + 闸门），
+其中含 `QUESTION_DELAY_SECONDS=8` 的看画面时间；把延迟调小只影响孩子看图时间，不影响识别。
+
+> 注意：`qwen2.5:3b` 开 `json_object` 但提示词里没有 JSON 示例时会只返回 `{}`。
+> 五个默认提示词都自带示例；改提示词时别把示例删了，否则 A4 会退化成规则题。
+
+首次调用会多花几秒加载模型，之后常驻内存/显存。
+
+---
 
 ## 1. 五个服务与接口契约
 
@@ -58,7 +106,7 @@ def read(payload: dict):
 ASR / TTS 同理：FunASR 的 `AutoModel(model="paraformer-zh")` 接 `/transcribe`，
 CosyVoice / 园区已有 TTS 接 `/synthesize` 返回 wav。
 
-## 3. 切换步骤
+## 3. 切换到园内 GPU 集群
 
 1. 复制 `.env.example` 为 `.env`，填园内地址，例如：
    ```ini

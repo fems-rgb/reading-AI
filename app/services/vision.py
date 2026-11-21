@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import threading
 import urllib.request
 from dataclasses import dataclass, field
 
@@ -23,6 +24,21 @@ DARK_THRESHOLD = 45.0
 BRIGHT_THRESHOLD = 232.0
 GLARE_RATIO = 0.32
 MIN_EDGE = 400
+
+# 本机 OCR 引擎按进程只建一次（加载模型约 1 秒），多线程下共用
+_OCR_ENGINE = None
+_OCR_LOCK = threading.Lock()
+
+
+def _rapidocr():
+    global _OCR_ENGINE
+    if _OCR_ENGINE is None:
+        with _OCR_LOCK:
+            if _OCR_ENGINE is None:
+                from rapidocr_onnxruntime import RapidOCR
+
+                _OCR_ENGINE = RapidOCR()
+    return _OCR_ENGINE
 
 
 @dataclass
@@ -120,9 +136,28 @@ class OcrService:
                 confidence=float(cached.get("ocr_confidence") or 0.95),
                 mode="library_cache",
             )
+        if self.settings.ocr_mode == "local":
+            return self._read_local(image_bytes)
         if self.settings.ocr_mode != "http":
             return OcrResult("", [], 0.0, "stub", degraded=True)
         return self._read_http(image_bytes)
+
+    def _read_local(self, image_bytes: bytes) -> OcrResult:
+        """RapidOCR（onnxruntime，CPU）在进程里识字：完全离线，不占显卡。"""
+        try:
+            engine = _rapidocr()
+            result, _elapse = engine(image_bytes)
+        except ImportError as exc:
+            raise RuntimeError("本机 OCR 没装：pip install rapidocr-onnxruntime") from exc
+        except Exception as exc:
+            raise RuntimeError(f"本机 OCR 识别失败：{exc}") from exc
+        lines = [
+            {"text": str(item[1]), "confidence": round(float(item[2]), 3)}
+            for item in (result or [])
+            if len(item) >= 3 and str(item[1]).strip()
+        ]
+        confidence = sum(line["confidence"] for line in lines) / len(lines) if lines else 0.0
+        return OcrResult("\n".join(line["text"] for line in lines), lines, confidence, "rapidocr")
 
     def _read_http(self, image_bytes: bytes) -> OcrResult:
         payload = json.dumps(
@@ -168,11 +203,55 @@ class VlmResult:
         }
 
 
+def _loose_json(text: str) -> dict:
+    import re
+
+    text = (text or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"```\s*$", "", text).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end > start:
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+    raise RuntimeError(f"视觉模型没有返回可解析的 JSON：{text[:120]}")
+
+
+# 名词短语里不该出现“在/正在”这种谓语标记；只拦这个，避免误伤“飞机/笑容”
+_LABEL_SENTENCE_HINTS = ("在", "正在")
+
+
+def _short_labels(items: list, limit: int = 10) -> list[str]:
+    """characters/objects 只收短名词短语：动作句（含“在”、过长、带标点）一律丢弃。
+
+    实测空白页会让视觉模型编出“一只小猫在草地上奔跑”，这种条目一旦进
+    了 facts 就会被当成画面事实，所以必须在入口拦掉。
+    """
+    kept: list[str] = []
+    for item in items or []:
+        text = str(item).strip()
+        if not text or len(text) > limit or any(ch in text for ch in "。！？；，"):
+            continue
+        if any(hint in text for hint in _LABEL_SENTENCE_HINTS):
+            continue
+        kept.append(text)
+    return kept
+
+
 class VlmService:
-    """A2。只输出"能看见"的东西，不写情节推断。"""
+    """A2。只输出“能看见”的东西，不写情节推断。"""
 
     PROMPT = (
         "你是绘本画面标注员。只描述这张图里直接可见的内容，不要推测情节、心理或画外信息。"
+        "看不清、空白或模糊时，characters 与 objects 返回空数组，不要编造。"
+        "characters 必须列出画面里所有的人和动物，哪怕只看到一部分身体；真的没有才返回空数组。"
+        "objects 是短名词（不超过 6 字），不要写整句。"
         "只输出 JSON：{\"characters\":[画面里的角色],\"objects\":[可见物品],"
         "\"scene\":\"场景（≤12字）\",\"relations\":[\"角色在做什么（≤15字）\"],\"mood\":\"画面情绪\"}"
     )
@@ -218,15 +297,19 @@ class VlmService:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with guard.safe_urlopen(request, timeout=60) as response:
+        with guard.safe_urlopen(request, timeout=90) as response:
             data = json.loads(response.read().decode("utf-8"))
         content = data["choices"][0]["message"]["content"]
-        parsed = json.loads(content)
+        # Ollama 的视觉模型有时会把 JSON 包在 ``` 里，或被思考过程污染
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            parsed = _loose_json(content)
         return VlmResult(
-            characters=list(parsed.get("characters") or []),
-            objects=list(parsed.get("objects") or []),
+            characters=_short_labels(list(parsed.get("characters") or [])),
+            objects=_short_labels(list(parsed.get("objects") or [])),
             scene=str(parsed.get("scene") or ""),
             relations=list(parsed.get("relations") or []),
             mood=str(parsed.get("mood") or ""),
-            mode="qwen3-vl",
+            mode=f"vlm:{self.settings.vlm_model}",
         )

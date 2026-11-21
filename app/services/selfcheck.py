@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import shutil
 import socket
+import subprocess
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -108,8 +109,9 @@ def fact_nouns(facts: dict) -> set[str]:
     return set(lexicon.find_nouns(" ".join(parts)))
 
 
-# 老师习惯说“手里拿着什么”，“手”属于提问习惯用语，不当成画外实体
-_PROBE_PHRASES = ("手里", "手上", "手里边", "身边", "旁边", "怀里")
+# 老师习惯说“手里拿着什么”，“手”属于提问习惯用语，不当成画外实体；
+# “画面/图片”是元话语，不是画面里的东西。
+_PROBE_PHRASES = ("手里", "手上", "手里边", "身边", "旁边", "怀里", "画面", "图片")
 
 
 def probe_text(text: str) -> str:
@@ -662,6 +664,49 @@ class SelfChecker(ContentChecker):
 # ---------------- 运行自检 ----------------
 
 
+def _local_engine_status(name: str, settings) -> tuple[str, str, str]:
+    """本机引擎能不能用：直接探依赖/模型/系统语音，不靠网络。"""
+    if name == "ocr":
+        try:
+            import rapidocr_onnxruntime  # noqa: F401
+        except ImportError:
+            return "fail", "本机 OCR 没装", "pip install rapidocr-onnxruntime"
+        return "ok", "RapidOCR 本机引擎（CPU，不联网）", ""
+    if name == "asr":
+        if not any(settings.asr_model_dir.rglob("model.bin")):
+            return "fail", f"ASR 模型不在 {settings.asr_model_dir}", "运行 python scripts\\fetch_models.py --only asr 下载模型"
+        try:
+            subprocess.run([settings.ffmpeg_bin, "-version"], capture_output=True, timeout=5, check=True)
+        except (OSError, subprocess.SubprocessError):
+            return "fail", "找不到 ffmpeg（音频转码要用）", "安装 ffmpeg 并加进 PATH"
+        return "ok", f"faster-whisper {settings.asr_model}（{settings.asr_device}/{settings.asr_compute_type}）", ""
+    if name == "tts":
+        try:
+            import pythoncom
+            import pyttsx3
+        except ImportError:
+            return "fail", "本机语音合成没装", "pip install pyttsx3"
+        voice = ""
+        try:
+            pythoncom.CoInitialize()
+            engine = pyttsx3.init()
+            voices = [str(getattr(item, "name", "")) for item in engine.getProperty("voices") or []]
+            engine.stop()
+            chinese = [item for item in voices if any(mark in item.lower() for mark in ("zh", "chinese", "huihui"))]
+            if not chinese:
+                return "warn", f"没找到中文语音：{'、'.join(voices[:2]) or '无'}", "在 Windows 里装中文语音包"
+            voice = chinese[0]
+        except Exception as exc:  # noqa: BLE001
+            return "fail", f"本机语音不可用：{str(exc)[:60]}", "检查 Windows 语音服务"
+        finally:
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
+        return "ok", f"Windows 本地语音 {voice}", ""
+    return "warn", "本机模式只支持 OCR / ASR / TTS", "这个环节改成 http 接园内服务"
+
+
 def run_system_check() -> dict:
     settings = get_settings()
     report = Report("system")
@@ -699,9 +744,13 @@ def run_system_check() -> dict:
                     f"{name.upper()} 服务",
                     "warn",
                     "演示模式（确定性规则）",
-                    "接入园内 GPU 服务后改成 http",
+                    "接入真实引擎后改成 local 或 http",
                 )
             )
+            continue
+        if mode == "local":
+            status, detail, action = _local_engine_status(name, settings)
+            checks.append(Check(f"model_{name}", f"{name.upper()} 服务", status, detail, action))
             continue
         audit = guard.audit_url(url)
         if not audit.allowed:

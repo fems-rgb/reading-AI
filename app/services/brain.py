@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .. import db
+from .. import db, lexicon
 from ..utils import truncate
 from . import nlg
 from .llm import LLMError, LocalLLM
@@ -20,6 +20,23 @@ from .metrics import Tracer
 QUESTION_TYPES = set(nlg.TYPE_LABELS)
 UNDERSTOOD = {"yes", "partial", "no"}
 ACTIONS = {"encourage", "confirm", "give_answer", "answer_why", "icon_choice"}
+
+
+def _has_chinese(text: str) -> bool:
+    """本机小模型偶尔会切成英文；面向孩子的话必须是中文，否则回退到规则文案。"""
+    return any("\u4e00" <= ch <= "\u9fff" for ch in (text or ""))
+
+
+def _ungrounded_entities(text: str, facts: dict) -> list[str]:
+    """问题里出现画面事实之外的名词就算没接地。
+
+    本机小模型会把提示词里的 JSON 示例原样照抄（实测连问三轮都是
+    “小兔子手里拿着什么？”）；闸门能拦住，但孩子已经听到了，所以在这里
+    先拦一道：不接地就直接换规则题，规则题只从 facts 里取词。
+    """
+    from .selfcheck import fact_nouns, probe_text
+
+    return sorted(set(lexicon.find_nouns(probe_text(text))) - fact_nouns(facts))
 
 
 class Brain:
@@ -110,8 +127,19 @@ class Brain:
             parsed, meta = await _run(self.tracer, "A4_question", self.llm.chat_json, system, user)
             if not isinstance(parsed, dict) or not str(parsed.get("question") or "").strip():
                 raise LLMError("A4 输出缺少 question")
+            if not _has_chinese(str(parsed["question"])):
+                raise LLMError("A4 输出不是中文")
+            question_text = truncate(str(parsed["question"]).strip(), max(max_len, 8))
+            ungrounded = _ungrounded_entities(question_text, facts)
+            if ungrounded:
+                return {
+                    **rule_based,
+                    "mode": "rule",
+                    "degraded_reason": "ungrounded_question",
+                    "ungrounded": ungrounded,
+                }
             return {
-                "question": truncate(str(parsed["question"]).strip(), max(max_len, 8)),
+                "question": question_text,
                 "type": str(parsed.get("type") or qtype),
                 "expected": str(parsed.get("expected") or rule_based["expected"]),
                 "hint": str(parsed.get("hint") or rule_based["hint"]),
@@ -146,6 +174,7 @@ class Brain:
                     "characters": facts.get("characters", []),
                     "objects": facts.get("objects", []),
                     "scene": facts.get("scene", ""),
+                    "relations": facts.get("relations", []),
                 },
             },
             ensure_ascii=False,
@@ -158,10 +187,14 @@ class Brain:
             action = str(parsed.get("action") or "").lower()
             if understood not in UNDERSTOOD or action not in ACTIONS:
                 raise LLMError("A7 字段取值越界")
+            reply = str(parsed.get("reply") or "")
+            if not _has_chinese(reply):
+                raise LLMError("A7 回复不是中文")
             return {
                 "understood": understood,
                 "action": action,
-                "reply": truncate(str(parsed.get("reply") or rule_based["reply"]), 30),
+                # 话术用规则模板：小模型会把问句和答案说反，孩子听到的话必须可控
+                "reply": nlg.reply_for(action, facts, answer, confidence),
                 "confidence": confidence,
                 "mode": "llm",
                 "prompt_version": version,
@@ -188,7 +221,7 @@ class Brain:
             {"child_age_months": child.get("age_months"), "turns": condensed}, ensure_ascii=False
         )
         try:
-            parsed, _meta = await _run(self.tracer, "A10_advice", self.llm.chat_json, system, user)
+            parsed, _meta = await _run(self.tracer, "A10_advice", self.llm.chat_json, system, user, json_mode=False)
             if not isinstance(parsed, list):
                 raise LLMError("A10 输出不是数组")
             valid_ids = {turn["id"] for turn in turns}
@@ -199,6 +232,8 @@ class Brain:
                 evidence = [int(i) for i in (item.get("evidence") or []) if str(i).isdigit()]
                 evidence = [i for i in evidence if i in valid_ids]
                 if not item.get("text") or not evidence:
+                    continue
+                if not _has_chinese(str(item["text"])):
                     continue
                 cleaned.append(
                     {
@@ -212,13 +247,13 @@ class Brain:
             return rule_based
 
 
-async def _run(tracer: Tracer | None, stage: str, fn, system: str, user: str):
+async def _run(tracer: Tracer | None, stage: str, fn, system: str, user: str, **kwargs):
     import asyncio
 
     if tracer is None:
-        return await asyncio.to_thread(fn, system, user)
+        return await asyncio.to_thread(fn, system, user, **kwargs)
     with tracer.timed(stage) as slot:
-        parsed, meta = await asyncio.to_thread(fn, system, user)
+        parsed, meta = await asyncio.to_thread(fn, system, user, **kwargs)
         slot["tokens_in"] = meta.get("tokens_in", 0)
         slot["tokens_out"] = meta.get("tokens_out", 0)
         slot["model"] = meta.get("model", "")

@@ -5,6 +5,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import logging.handlers
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,10 +22,47 @@ from .api import api, ws_api
 from .config import get_settings
 from .seed import ensure_seed
 from .services import metrics, speech
+from .services import camera as local_camera
 from .utils import age_label, today_start
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 TEMPLATES = Jinja2Templates(directory=str(WEB_DIR / "templates"))
+
+# 现场排障靠这份日志：老师把 data/server.log 发给开发就能定位问题，
+# 不用指望控制台窗口还开着。复核脚本只认「本次启动」之后的段落。
+_LOG_PATH: Path | None = None
+_STARTED_AT = time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _setup_file_log(path: Path) -> None:
+    global _LOG_PATH
+    if _LOG_PATH is not None:
+        return  # 测试里 lifespan 会被多次触发，只装一次
+    _LOG_PATH = path
+    handler = logging.handlers.RotatingFileHandler(
+        path, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+    )
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.addHandler(handler)
+    # uvicorn 的 logger 默认不向 root 传播：挂在它和 access 上，并关掉传播，
+    # 否则一条消息会同时被自己的 handler 和 root 的 handler 写两遍。
+    for name in ("uvicorn", "uvicorn.access"):
+        logger = logging.getLogger(name)
+        logger.addHandler(handler)
+        logger.propagate = False
+
+
+def _quiet_connection_errors(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """对端强制断开是常态（浏览器刷新、摄像头拔线），不是应用错误。
+    不拦的话 Windows 上 asyncio 会为每次断开打一大段 Traceback，把真问题淹没。"""
+    exc = context.get("exception")
+    if isinstance(exc, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+        return
+    loop.default_exception_handler(context)
 
 
 def render(request: Request, name: str, **context) -> HTMLResponse:
@@ -34,6 +75,11 @@ async def lifespan(app: FastAPI):
     db.init_db()
     ensure_seed()
     settings = get_settings()
+    _setup_file_log(settings.data_dir / "server.log")
+    asyncio.get_running_loop().set_exception_handler(_quiet_connection_errors)
+    logging.getLogger("app").info(
+        "服务启动 %s 版本 %s 模式 %s", _STARTED_AT, __version__, settings.model_modes
+    )
     db.audit(
         "system",
         "startup",
@@ -47,6 +93,7 @@ async def lifespan(app: FastAPI):
     if pruned:
         db.audit("system", "tts_pruned", {"files": pruned, "keep_days": speech.KEEP_DAYS})
     yield
+    local_camera.release_all()
 
 
 app = FastAPI(title="绘本阅读陪伴 AI 智能体", version=__version__, lifespan=lifespan)
@@ -175,6 +222,7 @@ async def healthz() -> dict:
         "demo_mode": settings.demo_mode,
         "modes": settings.model_modes,
         "offline_only": settings.offline_only,
+        "started_at": _STARTED_AT,
     }
 
 

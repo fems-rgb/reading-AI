@@ -35,6 +35,15 @@ STATE_LABELS = {
 }
 
 
+def pick_ready_page(pages: list[dict], page_no: int) -> dict | None:
+    """只取老师校对过（ready）的页；needs_review 页可能是模型幻觉产物，
+    直接拿来提问会把“小猫在奔跑”这类未核实内容讲给孩子听。"""
+    return next(
+        (page for page in pages if page["page_no"] == page_no and page.get("status") == "ready"),
+        None,
+    )
+
+
 class EventBus:
     """进程内 pub/sub。教师端实时视图、机器人端都从这里取事件。"""
 
@@ -109,7 +118,15 @@ class SessionRuntime:
         if not child or not book:
             return None
         pages = db.list_pages(book["id"])
-        runtime = cls(session=session, child=child, book=book, pages=pages)
+        # 服务重启后会话还在，页码要从库里恢复，否则孩子翻到第 5 页、
+        # 重启后界面又回到“拍第 1 页”。
+        runtime = cls(
+            session=session,
+            child=child,
+            book=book,
+            pages=pages,
+            page_no=int(session.get("last_page_no") or 0),
+        )
         for turn in db.list_turns(session["id"])[-3:]:
             runtime.history.append(
                 {
@@ -173,6 +190,10 @@ class SessionRuntime:
         if not self.pages:
             self._emit("error", {"human_hint": "这本绘本还没有页面，请老师先在绘本库里补上。"})
             return {"ok": False, "human_hint": "这本绘本还没有页面"}
+        if not any(page.get("status") == "ready" for page in self.pages):
+            hint = "这本绘本的页面都还没校对，请老师先在绘本库里确认页面内容。"
+            self._emit("error", {"human_hint": hint})
+            return {"ok": False, "human_hint": hint}
         db.update_session(self.session["id"], state="IDLE")
         self._emit("started", {"session": self.snapshot()})
         return {"ok": True, "session": self.snapshot()}
@@ -192,7 +213,8 @@ class SessionRuntime:
             self.state = "ANALYZING"
             self._emit("state", {"page_no": page_no})
 
-            library_page = next((page for page in self.pages if page["page_no"] == page_no), None)
+            # 只用老师校对过（ready）的页：needs_review 页可能是模型幻觉产物。
+            library_page = pick_ready_page(self.pages, page_no)
             tracer = Tracer(self.session["id"], page_no)
             # 缩略图与识别并行；PIL 解码放到线程，不阻塞其他会话
             thumb_task = asyncio.create_task(asyncio.to_thread(_thumbnail, image_bytes))
@@ -337,7 +359,9 @@ class SessionRuntime:
                 }
             )
             audio = self._remember_audio(result.get("audio", {}))
-            self.state = "LISTENING"
+            # 这一问答结束了，回到“休息中”；留在 LISTENING 会让刷新后的界面
+            # 仍显示“在听你说”，老师会误以为孩子还能继续答这一页。
+            self.state = "IDLE"
             self._emit(
                 "reply",
                 {

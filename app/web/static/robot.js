@@ -291,7 +291,17 @@ function applySnapshot(snapshot) {
       phase = 'answered';
       setMain(`拍第 ${nextPage} 页`, true);
     }
+    return;
   }
+
+  // 还没拍过页，或服务刚重启（page_no 归零）：也要把主按钮恢复出来，
+  // 否则断线重连后会一直停在“正在重连…”无法继续。
+  if (phase === 'ended') return;
+  clearAnalyzeWatch();
+  phase = 'idle';
+  nextPage = Math.max(nextPage || 1, 1);
+  setState(snapshot.state_label || '休息中', true);
+  setMain(`拍第 ${nextPage} 页`, true);
 }
 
 function shutDown(code) {

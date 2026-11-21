@@ -1,18 +1,25 @@
-# 运行主程序所需依赖（全部离线可用，不访问外网）
+# 运行依赖：全部离线可用，运行时不需要外网
 fastapi>=0.110
 uvicorn>=0.27
+# 设备页/教师端靠 WebSocket 推送；uvicorn 不带 ws 协议实现，必须单独装
+websockets>=12
 jinja2>=3.1
 python-multipart>=0.0.9
 pillow>=10.0
+numpy>=1.26
+
+# ---- 真实本机引擎（随应用进程运行）----
+# A1 文字识别：RapidOCR + onnxruntime，CPU 即可，中文效果好
+rapidocr-onnxruntime>=1.4
+# A6 童声识别：faster-whisper（模型不在 pip 里，见 scripts/fetch_models.py）
+faster-whisper>=1.1
+# A5 语音合成：Windows 系统语音（SAPI）
+pyttsx3>=2.90; sys_platform == "win32"
+pywin32>=306; sys_platform == "win32"
+# 本机 USB 摄像头（camera:0）与 RTSP 桥接
+opencv-python>=4.8
 
 # 测试
 pytest>=8.0
+pytest-asyncio>=0.23
 httpx>=0.27
-
-# 可选：把电脑 USB 摄像头 / RTSP 流桥成 HTTP（_tools/camera_bridge.py）
-# opencv-python>=4.8
-
-# 本地模型接入（默认不安装；见 docs/LOCAL_MODELS.md）
-# paddleocr>=2.8        # A1 文字识别
-# funasr>=1.1           # A6 童声 ASR
-# soundfile>=0.12       # 音频读写

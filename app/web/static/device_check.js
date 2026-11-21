@@ -155,8 +155,12 @@ function testNetCam() {
     $('netcam-note').textContent = '地址里带了账号密码：浏览器不让直连，去取图面板选「网络摄像头」，那边会由服务端带着凭证转发。';
     return;
   }
-  if (!/^https?:\/\//i.test(url)) {
-    $('netcam-note').textContent = '地址要写成 http://192.168.1.50/capture 这样，只支持 http（局域网摄像头一般没有证书）。';
+  let target = url;
+  if (/^camera:\d{1,2}$/i.test(url)) {
+    // 本机 USB 摄像头：浏览器拿不到设备，转给服务端拍一帧（需已登录教师端）
+    target = '/api/camera/snapshot?url=' + encodeURIComponent(url);
+  } else if (!/^https?:\/\//i.test(url)) {
+    $('netcam-note').textContent = '本机摄像头填 camera:0；局域网摄像头写成 http://192.168.1.50/capture 这样（只支持 http）。';
     return;
   }
   netProbe += 1;
@@ -175,13 +179,14 @@ function testNetCam() {
       rememberNetCam(url);
       $('netcam-note').textContent = `有画面：${img.naturalWidth}×${img.naturalHeight}，${cost}ms · 已记着，取图面板选「网络摄像头」直接用`;
     } else {
-      $('netcam-note').textContent = `没画面（${cost}ms）：核对 IP/端口、摄像头是否通电、和本机是否同一 WiFi。` +
-        'ESP32 用 /capture；手机 IP Webcam 用 /shot.jpg；若浏览器看不到但服务端能到，取图面板会自动改走服务端预览。';
+      $('netcam-note').textContent = `没画面（${cost}ms）：本机摄像头先确认已登录教师端、没被其他软件占用；` +
+        '网络摄像头核对 IP/端口、是否通电、和本机是否同一 WiFi。ESP32 用 /capture；手机 IP Webcam 用 /shot.jpg；' +
+        '若浏览器看不到但服务端能到，取图面板会自动改走服务端预览。';
     }
   };
   img.onload = settle;
   img.onerror = settle;
-  img.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+  img.src = target + (target.includes('?') ? '&' : '?') + 't=' + Date.now();
   // MJPEG 流在有些内核上不触发 onload，3 秒后直接看有没有像素
   setTimeout(settle, 3000);
 }

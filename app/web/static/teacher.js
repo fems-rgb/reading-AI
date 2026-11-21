@@ -225,7 +225,7 @@ function renderTimeline() {
           ${turn.understood ? ` · 理解：${escapeHtml(turn.understood)}` : ''}</div>
         <div class="checks">
           ${pill(verdict, VERDICT_TEXT[verdict] || verdict)}
-          <span class="small muted">${gate.score != null ? gate.score + ' 分' : ''} ${checker.source ? '· 来源 ' + escapeHtml(checker.source) : ''}</span>
+          <span class="small muted">${gate.score != null ? gate.score + ' 分' : ''} ${checker.source ? '· 来源 ' + escapeHtml(checker.source) : ''}${turn.latency_ms ? ' · 本页 ' + (turn.latency_ms / 1000).toFixed(1) + ' 秒' : ''}</span>
           <details><summary>检查项</summary>${checkTable(gate.checks || checker.checks || [])}</details>
         </div>
       </div>`;

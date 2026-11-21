@@ -29,6 +29,7 @@ from .core import orchestrator
 from .core.orchestrator import STATE_LABELS, SessionRuntime, bus, list_active_sessions
 from .core.pipeline import analyze_page, build_weekly_report
 from .services import selfcheck
+from .services import camera as local_camera
 from .services.metrics import today_summary
 from .services.vision import OcrService, VlmService
 from .utils import age_label, now, today_start, truncate
@@ -231,8 +232,8 @@ async def upload_page(
     relative = f"{book_id}/{filename}"
 
     # 预识别：能接模型就生成草稿，接不上就标记待校对（不假装识别成功）
-    ocr = OcrService().read_sync(data)
-    vlm = VlmService().analyze_sync(data)
+    ocr = await asyncio.to_thread(OcrService().read_sync, data)
+    vlm = await asyncio.to_thread(VlmService().analyze_sync, data)
     from .services import nlg
 
     facts = {
@@ -487,7 +488,7 @@ async def selfcheck_stats(role: str = Depends(auth.require_teacher)) -> dict:
 
 @api.get("/teacher/selfcheck/demo")
 async def selfcheck_demo(role: str = Depends(auth.require_teacher)) -> dict:
-    """内容闸门演示：不调模型，纯规则跑几条典型坏例子，让老师看见它真会拦。"""
+    """内容闸门试跑：不调模型，纯规则跑几条典型坏例子，让老师看见它真会拦。"""
     checker = selfcheck.ContentChecker()
     facts = {
         "raw_text": "小兔子在草地上追风筝。",
@@ -501,7 +502,7 @@ async def selfcheck_demo(role: str = Depends(auth.require_teacher)) -> dict:
         {"id": 1, "question": "小兔子在草地上做什么呀？", "answer_text": "追风筝"},
         {"id": 2, "question": "风筝飞到哪里去了呀？", "answer_text": "天上"},
     ]
-    child = {"name": "演示", "age_months": 54, "guardian_consent": 1}
+    child = {"name": "试跑样例", "age_months": 54, "guardian_consent": 1}
 
     cases: list[dict] = []
 
@@ -760,6 +761,16 @@ async def camera_snapshot(request: Request, session_id: str = "", token: str = "
     except HTTPException:
         if auth.role_of(request) not in {"teacher", "admin"}:
             raise
+    # camera:0 这种本机摄像头：服务端直接拍一帧，不需要 camera_bridge 转发
+    local_index = local_camera.camera_index(url)
+    if local_index is not None:
+        try:
+            frame = await asyncio.to_thread(local_camera.capture, local_index)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)[:120]) from exc
+        return Response(
+            content=frame, media_type="image/jpeg", headers={"Cache-Control": "no-store"}
+        )
     user, password, clean_url = _url_credentials(url)
     ok, reason, ip = await asyncio.to_thread(_camera_url_allowed, clean_url)
     if not ok:

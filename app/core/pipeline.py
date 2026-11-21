@@ -56,10 +56,21 @@ def _pick_bank(page: dict | None, child: dict, history: list[dict], prefer: str)
     return None
 
 
+def _vlm_saw_something(vlm) -> bool:
+    """本次 VLM 是否真的看到了东西：降级或四个字段全空都算没看到。"""
+    return not vlm.degraded and bool(vlm.characters or vlm.objects or vlm.scene or vlm.relations)
+
+
 def _facts_from(ocr, vlm, page: dict | None) -> dict:
-    keywords = list((page or {}).get("keywords") or [])
-    characters = list(vlm.characters or (page or {}).get("characters") or [])
-    objects = list(vlm.objects or (page or {}).get("objects") or [])
+    # 画面事实只能有一个来源：本次实拍看到了就全用实拍，否则整体回退到
+    # 已校对（status=ready）的库页缓存。绝不逐字段混拼——混拼会让讲稿来自
+    # 实拍、题目来自旧库页，线上就出现过“人躺在床上”却问“小猫在做什么”。
+    live = _vlm_saw_something(vlm)
+    characters = list(vlm.characters or []) if live else list((page or {}).get("characters") or [])
+    objects = list(vlm.objects or []) if live else list((page or {}).get("objects") or [])
+    relations = list(vlm.relations or []) if live else list((page or {}).get("relations") or [])
+    scene = (vlm.scene or "") if live else str((page or {}).get("scene") or "")
+    keywords = (characters + objects)[:5] if live else list((page or {}).get("keywords") or [])
     if not keywords:
         keywords = (characters + objects)[:5]
     raw_text = ocr.text or (page or {}).get("raw_text", "") or ""
@@ -69,13 +80,14 @@ def _facts_from(ocr, vlm, page: dict | None) -> dict:
         "raw_text": raw_text,
         "characters": characters,
         "objects": objects,
-        "relations": list(vlm.relations or (page or {}).get("relations") or []),
-        "scene": vlm.scene or (page or {}).get("scene", "") or "",
-        "mood": vlm.mood or (page or {}).get("mood", "") or "",
+        "relations": relations,
+        "scene": scene,
+        "mood": (vlm.mood or "") if live else str((page or {}).get("mood") or ""),
         "keywords": keywords,
         "ocr_confidence": round(float(ocr.confidence or 0), 3),
         "ocr_mode": ocr.mode,
         "vlm_mode": vlm.mode,
+        "facts_source": "live" if live else ("library" if page else "empty"),
         "degraded": bool(ocr.degraded or vlm.degraded),
     }
 
@@ -229,7 +241,8 @@ async def _analyze_page(request: PageRequest, tracer: Tracer) -> dict:
     if final_question.get("mode") == "safe_template":
         source = "safe_template"
 
-    # 4. 落库（只存短文本，不存图片/音频）
+    # 4. 落库（只存短文本，不存图片/音频）；耗时先算好随行写入
+    latency = round((time.perf_counter() - started) * 1000)
     turn_id = db.add_turn(
         request.session_id,
         request.page_no,
@@ -252,9 +265,9 @@ async def _analyze_page(request: PageRequest, tracer: Tracer) -> dict:
             "checked_at": now(),
         },
         source=source,
+        latency_ms=latency,
     )
 
-    latency = round((time.perf_counter() - started) * 1000)
     tracer.record("page_total", latency, provider="pipeline", model="")
     return {
         "ok": True,

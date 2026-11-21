@@ -127,6 +127,11 @@
     return /^https?:\/\/[^/@\s]+@/i.test(url);
   }
 
+  function isLocalCamera(url) {
+    // camera:0 —— 服务端直接开这台电脑的 USB/内置摄像头，不需要 camera_bridge
+    return /^camera:\d{1,2}$/i.test(url);
+  }
+
   function stopNetPreview() {
     if (netTimer) clearInterval(netTimer);
     netTimer = null;
@@ -144,7 +149,10 @@
     const url = session.netUrl;
     img.hidden = false;
     const credentials = hasCredentials(url);
-    if (!credentials && isMjpeg(url)) {
+    if (isLocalCamera(url)) {
+      session.proxyPreview = true; // 本机摄像头只能由服务端拍，浏览器拿不到设备
+    }
+    if (!credentials && !session.proxyPreview && isMjpeg(url)) {
       // MJPEG 是长连接：设一次 src 浏览器会自己持续接收，别轮询重设
       img.src = url;
       img.onerror = () => {
@@ -331,12 +339,13 @@
           </div>
           <div class="src-net-row">
             <input id="src-net-name" placeholder="名字（如 教室 ESP32）">
-            <input id="src-net-url" placeholder="http://192.168.1.50/capture">
+            <input id="src-net-url" placeholder="http://192.168.1.50/capture 或 camera:0">
             <button class="btn" data-src="net-connect">连接</button>
+            <button class="btn ghost" data-src="net-local">本机摄像头</button>
           </div>
-          <p class="small muted">填能返回一张 JPEG 的地址：ESP32-CAM 用 <code>/capture</code>，
-            手机 IP Webcam 用 <code>/shot.jpg</code>，电脑 USB 摄像头用 <code>_tools/camera_bridge.py</code> 启动后显示的地址。
-            只给 MJPEG 流（<code>/stream</code>、<code>/video</code>）的也能用：预览直连，抓帧由服务端从流里抠一张。
+          <p class="small muted">这台电脑插了 USB 摄像头（或自带摄像头）就填 <code>camera:0</code>，点【连接】直接拍，不用开别的脚本；
+            第二个摄像头填 <code>camera:1</code>。局域网摄像头填能返回一张 JPEG 的地址：ESP32-CAM 用 <code>/capture</code>，
+            手机 IP Webcam 用 <code>/shot.jpg</code>。只给 MJPEG 流（<code>/stream</code>、<code>/video</code>）的也能用：预览直连，抓帧由服务端从流里抠一张。
             要登录的摄像头把账号密码写进地址：<code>http://账号:密码@192.168.1.64/capture</code>（Basic / Digest 都行）；
             只给 RTSP 的先用 <code>camera_bridge.py --url</code> 转成本机 http 地址。</p>
         </div>
@@ -803,6 +812,11 @@
       return;
     }
     if (action.dataset.src === 'net-connect') return connectNet();
+    if (action.dataset.src === 'net-local') {
+      dom.netName.value = dom.netName.value || '本机摄像头';
+      dom.netUrl.value = 'camera:0';
+      return connectNet();
+    }
     if (action.dataset.src === 'net-forget') return forgetNet();
     if (action.dataset.src === 'confirm') {
       if (!session) return;

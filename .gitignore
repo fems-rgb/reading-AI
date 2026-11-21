@@ -13,8 +13,19 @@ __pycache__/
 .venv/
 venv/
 
+# 本机模型文件（体积大，用 scripts/fetch_models.py 下载）
+models/
+
+# 备份归档
+backups/
+
 # 本地验证产物（截图、日志、临时探针输出）
 _tools/shots/
+_tools/_real_data/
+_tools/_ground_data/
+_tools/_old_demo_data/
+_tools/_say*.wav
+_tools/_usb_*.jpg
 _tools/shot_*.png
 _tools/*.log
 _tools/*.txt

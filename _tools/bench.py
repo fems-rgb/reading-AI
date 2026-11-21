@@ -25,6 +25,8 @@ os.environ.setdefault("DATA_DIR", tempfile.mkdtemp(prefix="bench_"))
 os.environ.setdefault("SECRET_KEY", "bench-secret")
 os.environ.setdefault("TEACHER_PIN", "2026")
 os.environ.setdefault("ADMIN_PIN", "8642")
+# 基准需要一套固定孩子/绘本，显式打开示例数据
+os.environ.setdefault("SEED_DEMO", "1")
 
 from PIL import Image, ImageDraw  # noqa: E402
 

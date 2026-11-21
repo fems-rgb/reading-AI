@@ -4,32 +4,39 @@
 机器人/平板拍下绘本页面 → 本地模型生成三层摘要与一个问题 → 孩子口头回答 → 系统回应并把
 这次共读整理成教师教学建议与家长周报。
 
-全部推理在园内完成（PaddleOCR + Qwen3-VL + 本地 LLM + FunASR + 本地 TTS），
+全部推理在园内完成（RapidOCR + Qwen2.5-VL + Qwen2.5 + faster-whisper + Windows 系统语音），
 **默认不访问任何外网**，代码里有硬约束而不是口头承诺。
 
 ---
 
-## 1. 三分钟跑起来
+## 1. 装好就能用（Windows 一台电脑跑全链路）
 
-```bash
-python -m pip install -r requirements.txt
-python run.py
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1   # 装环境 + 下模型 + 生成 .env + 开机自启
+scripts\run_server.bat                                        # 启动
 ```
+
+前置：Python 3.10+、[Ollama](https://ollama.com/download)、ffmpeg（`winget install Gyan.FFmpeg`）。
+完整步骤与故障处理见 [docs/DEPLOY.md](docs/DEPLOY.md)。
 
 打开：
 
 | 入口 | 地址 | 谁能用 |
 | --- | --- | --- |
 | 首页 | http://127.0.0.1:8000/ | 任何人（只显示概况） |
-| 教师端 | http://127.0.0.1:8000/teacher | 老师口令 `2026`，管理员口令 `8642` |
+| 教师端 | http://127.0.0.1:8000/teacher | 老师口令（`.env` 的 `TEACHER_PIN`） |
 | 机器人端 | 教师端点「开始共读」后生成的链接 | 该次会话的设备 |
 | 家长卡片 | 教师端「周报与授权」里的家长链接 | 家长（一次性随机 token） |
+| 设备自检 | http://127.0.0.1:8000/device-check | 任何人（不读孩子数据） |
 
-首次启动会自动铺演示数据（4 个孩子、2 本绘本、6 道题库、1 次已结束共读、1 份已发布周报），
-**开箱即可点完整流程**。首次启动时所有模型都是 `stub`，界面顶部会显示「演示模式」——
-不会假装模型已经接好。
+首次启动是**空库**：老师在教师端录入本班孩子与绘本页，或直接在机器人端点「拍第 1 页」随拍随读。
+`SEED_DEMO=1` 才会铺一套示例孩子/绘本，只给开发与验收用。
 
-接园内 GPU：见 [docs/LOCAL_MODELS.md](docs/LOCAL_MODELS.md)，只改 `.env`，不改代码。
+自带的五个引擎默认全部真实：OCR（RapidOCR）、看图（qwen2.5vl:3b）、语言（qwen2.5:3b）、
+童声识别（faster-whisper）、语音合成（系统中文女声）。只要有一个环节退回 `stub`，
+首页与 `/healthz` 会明确标「演示模式」，不假装模型已经接好。
+
+改用园内 GPU：见 [docs/LOCAL_MODELS.md](docs/LOCAL_MODELS.md)，只改 `.env`，不改代码。
 
 ---
 
@@ -78,7 +85,8 @@ https 页面还不能直连局域网 http。所以预览用 `<img>` 直连（失
 | --- | --- |
 | ESP32-CAM（CameraWebServer 示例） | `http://<esp32-ip>/capture` |
 | 手机装 IP Webcam / DroidCam 等 | `http://<手机-ip>:8080/shot.jpg`（按 App 提示的抓帧地址） |
-| 电脑摄像头（USB/内置） | 先跑 `python _tools\camera_bridge.py`，再填它打印的 `http://<电脑-ip>:8081/capture` |
+| 电脑摄像头（USB/内置） | `camera:0`（第 2 个摄像头写 `camera:1`），服务端直接拍帧，最稳 |
+| 电脑摄像头但要 http 地址（旧机器人只认 http） | 先跑 `python _tools\camera_bridge.py`，再填它打印的 `http://<电脑-ip>:8081/capture` |
 | 只给 RTSP 的机器人/网络摄像头 | 同一脚本 `--url rtsp://<摄像头-ip>:554/...`，把它转成 http（面板里直接填 `rtsp://` 会当场提示怎么转） |
 | 只给 MJPEG 流的网络摄像头 | `http://<摄像头-ip>/stream`（预览直连，抓帧由服务端抠一帧） |
 | 要网页登录的摄像头（海康/大华等） | `http://<账号>:<密码>@<摄像头-ip>/<抓帧路径>`（Basic / Digest 自动处理） |
@@ -198,16 +206,19 @@ app/
     brain.py         A3/A4/A7/A10 的模型/规则双实现
     nlg.py           规则版文本生成与理解
     llm.py           园内 OpenAI 兼容客户端
-    speech.py        A5 TTS / A6 ASR
+    speech.py        A5 TTS / A6 ASR（本机 SAPI + faster-whisper）
+    camera.py        本机 USB 摄像头取帧（camera:0 / camera:1）
     selfcheck.py     A11 三层自检
     metrics.py       A9 埋点
   web/
     templates/       base / index / login / teacher / robot / parent / device_check
     static/          app.css / teacher.js / robot.js / capture.js（多来源取图）
                      device.js（设备能力探测）/ device_check.js（自检页）
-docs/LOCAL_MODELS.md 接园内模型的完整说明
+docs/DEPLOY.md       一键部署（安装、局域网、自启、备份、故障）
+docs/LOCAL_MODELS.md 接园内 GPU 集群的完整说明
 docs/ROBOT_OPS.md    机器人部署与故障处理
-_tools/             基准（bench.py）、冒烟（live_smoke.py）、导入检查
+scripts/            install.ps1 / fetch_models.py / run_server.bat / backup.ps1
+_tools/             基准（bench.py）、冒烟（live_smoke.py）、复核（recheck.py）
 tests/               自检、接口、离线守卫用例
 run.py               启动器
 ```
@@ -217,13 +228,15 @@ run.py               启动器
 ## 8. 开发与验证
 
 ```bash
-python -m pytest tests -q                 # 63 条：内容闸门 / 接口全链路 / 网络摄像头代理（含 MJPEG、Basic/Digest 登录、IP 钉死）/ WebSocket / 离线守卫 / 播放缓存清理 / 语音回答
+python -m pytest tests -q                 # 100 条：内容闸门 / 画面接地 / 接口全链路 / 网络摄像头代理（含 MJPEG、Basic/Digest 登录、IP 钉死）/ WebSocket / 离线守卫 / 播放缓存清理 / 语音回答
 python _tools\check_imports.py            # 逐模块 import，抓循环导入与语法错误
-python _tools\live_smoke.py               # 对已启动服务跑一遍真实链路（含闸门演示输出）
+python _tools\live_smoke.py               # 对已启动服务跑一遍真实链路（自建烟测孩子/绘本，跑完清理）
+python _tools\recheck.py                  # 九步复核：测试/导入/前端/服务/冒烟/浏览器/防护/离线/仓库，换个通道再证一遍
+.venv\Scripts\python.exe scripts\fetch_models.py --check   # 模型是否就绪
 ```
 
 `live_smoke.py` 会打印摘要/提问的自检结论、建议条数、周报分数、运行自检每一项状态，
-可以直接当作部署后的冒烟验收。
+以及真实的 OCR/VLM 模式（`rapidocr` / `vlm:qwen2.5vl:3b` 这类），可以直接当作部署后的冒烟验收。
 
 ---
 
@@ -311,8 +324,8 @@ python _tools\live_smoke.py               # 对已启动服务跑一遍真实链
 
 ## 11. 已知边界
 
-- **演示模式下**：OCR 取库内缓存或空、VLM 只有库内页面有语义、ASR 用脚本化转写、TTS 是提示音。
-  这不是"假装能用"，界面与 `/healthz` 都会明确标 `demo_mode`。
+- **演示模式只在降级时出现**：某个引擎连不上或没装（OCR 取库内缓存或空、VLM 无语义、ASR 脚本化转写、
+  TTS 提示音）时，界面与 `/healthz` 会明确标 `demo_mode`，不会假装能用。真实部署的自检会指出是哪一项。
 - 单进程内存态（事件总线、会话运行时）适合一个园区单机部署；要多实例需把 `EventBus` 与
   `RUNTIMES` 换成 Redis 之类的共享层。
 - 拍照质量阈值按 720p 教室实拍设定（`app/services/vision.py` 顶部），换设备需重标。

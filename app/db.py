@@ -188,29 +188,51 @@ DEFAULT_PROMPTS: tuple[tuple[str, str], ...] = (
     (
         "A3_fuse",
         "你是绘本页面转述助手。只使用给定的 OCR 文字与画面事实，不得新增人物、物品、情节。"
+        "所有文字字段都用简体中文，不要输出英文。"
         "输出 JSON：raw_text（OCR 原文，禁止改写）、faithful_description（3-6 岁可懂，每句≤15 字）、"
-        "read_aloud_script（只能重组前两层）、speculative_flags（推测内容及原因）、keywords。",
+        "read_aloud_script（只能重组前两层）、speculative_flags（推测内容及原因）、keywords。"
+        "只输出一个 JSON 对象，不要解释、不要 markdown。格式示例（示例里的角色和物品只演示格式，"
+        "必须替换成给定事实里的真实内容，严禁照抄）："
+        '{"raw_text": "小兔子拿着风筝。", '
+        '"faithful_description": "小兔子拿着风筝在草地上跑。", '
+        '"read_aloud_script": "小兔子，拿风筝，草地上，跑呀跑。", '
+        '"speculative_flags": [], "keywords": ["小兔子", "风筝"]}',
     ),
     (
         "A4_question",
         "你是幼儿园绘本共读老师。基于当前页事实提 1 个问题：句子≤{max_len}字、不用抽象词、"
         "不重复最近 3 个问题、不提及画面里没有的东西、每 3 题最多 1 道封闭题。"
-        "输出 JSON：question、type、expected、hint。",
+        "question 必须用简体中文，禁止输出英文或拼音。"
+        "输出 JSON：question、type、expected、hint。"
+        "只输出一个 JSON 对象，不要解释、不要 markdown。格式示例（示例里的角色和物品只演示格式，"
+        "必须替换成 page 里真实存在的内容，严禁照抄）："
+        '{"question": "小兔子手里拿着什么？", "type": "observe", '
+        '"expected": "风筝", "hint": "看看小兔子手里拿着的东西"}',
     ),
     (
         "A7_understand",
-        "判断孩子是否理解了刚才的问题，不要打分。输出 JSON：understood(yes/partial/no)、"
-        "action(encourage/confirm/give_answer/answer_why/icon_choice)、reply（≤30 字，温柔）。",
+        "判断孩子是否理解了刚才的问题，不要打分。reply 必须用简体中文，温柔、≤30 字。"
+        "输出 JSON：understood(yes/partial/no)、"
+        "action(encourage/confirm/give_answer/answer_why/icon_choice)、reply。"
+        "只输出一个 JSON 对象，不要解释、不要 markdown。格式示例（示例内容只演示格式，"
+        "reply 只能提 visible_facts 里的东西，严禁照抄）："
+        '{"understood": "yes", "action": "encourage", '
+        '"reply": "你说得真好，小兔子确实拿着风筝。"}',
     ),
     (
         "A10_advice",
-        "基于本次问答记录给老师 3-5 条可执行建议。每条必须给出 evidence（对应问答记录 id），"
-        "不得排名、比较幼儿、贴能力标签。输出 JSON 数组：text、category、evidence。",
+        "基于本次问答记录给老师 3-5 条可执行建议，text 用简体中文。每条必须给出 evidence（对应问答记录 id），"
+        "不得排名、比较幼儿、贴能力标签。输出 JSON 数组：text、category、evidence。"
+        "只输出一个 JSON 数组，不要解释、不要 markdown。格式示例："
+        '[{"text": "下次可先让孩子指图再回答。", "category": "提问方式", "evidence": [1]}]',
     ),
     (
         "A11_selfcheck",
-        "你是内容质检员。检查摘要/问题是否只包含画面事实、是否适龄、是否重复。"
-        "输出 JSON：verdict(pass/rewrite/block)、score、checks[]、actions[]。",
+        "你是内容质检员。检查摘要/问题是否只包含画面事实、是否适龄、是否重复、是否中文。"
+        "输出 JSON：verdict(pass/rewrite/block)、score、checks[]、actions[]。"
+        "只输出一个 JSON 对象，不要解释、不要 markdown。格式示例："
+        '{"verdict": "pass", "score": 96, '
+        '"checks": [{"name": "事实一致", "ok": true}], "actions": []}',
     ),
 )
 
@@ -264,13 +286,21 @@ def init_db() -> None:
     with tx() as conn:
         conn.executescript(SCHEMA)
         for name, body in DEFAULT_PROMPTS:
-            exists = conn.execute(
-                "SELECT 1 FROM prompts WHERE name=? AND version=1", (name,)
+            latest = conn.execute(
+                "SELECT version, body FROM prompts WHERE name=? ORDER BY version DESC LIMIT 1",
+                (name,),
             ).fetchone()
-            if not exists:
+            if latest is None:
                 conn.execute(
                     "INSERT INTO prompts(name, version, body, active, created_at) VALUES (?,1,?,1,?)",
                     (name, body, now()),
+                )
+            elif latest["body"] != body:
+                # 提示词随版本升级：默认文案变了就写一版新的并让旧版失效，已有库无需手改
+                conn.execute("UPDATE prompts SET active=0 WHERE name=?", (name,))
+                conn.execute(
+                    "INSERT INTO prompts(name, version, body, active, created_at) VALUES (?,?,?,1,?)",
+                    (name, int(latest["version"]) + 1, body, now()),
                 )
 
 
@@ -513,10 +543,11 @@ def add_turn(
     qtype: str,
     checker: dict,
     source: str = "agent",
+    latency_ms: int = 0,
 ) -> int:
     return x(
         "INSERT INTO turns(session_id, page_no, book_page_id, question, qtype, source,"
-        " checker, created_at) VALUES (?,?,?,?,?,?,?,?)",
+        " checker, latency_ms, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
         (
             session_id,
             page_no,
@@ -525,6 +556,7 @@ def add_turn(
             qtype,
             source,
             json.dumps(checker, ensure_ascii=False),
+            latency_ms,
             now(),
         ),
     )

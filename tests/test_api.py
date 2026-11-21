@@ -294,6 +294,9 @@ def test_full_reading_flow(teacher):
     ).json()
     assert answered["ok"] is True
     assert answered["reply"]
+    # 回答完回到“休息中”：否则刷新后界面还显示“在听你说”，老师会误判
+    snapshot = client.get(f"/api/device/{session_id}", params={"token": token}).json()
+    assert snapshot["snapshot"]["state"] == "IDLE", snapshot["snapshot"]
 
     # 教师端：结束并生成建议
     ended = client.post(f"/api/teacher/sessions/{session_id}/end", json={}).json()

@@ -14,7 +14,7 @@
 | 数据目录 | `data/` 可写，磁盘留 1GB 以上 | 首次启动会自动建库与目录 |
 | 端口 | 默认 8000，未被占用 | `netstat -ano \| findstr :8000` |
 | `.env` | **必须设 `SECRET_KEY`** | 不设则每次重启随机生成，老师要被踢下线重登 |
-| 口令 | 改掉默认 `TEACHER_PIN=2026` / `ADMIN_PIN=8642` | 改完重启生效 |
+| 口令 | 用 `scripts\install.ps1` 生成随机口令，或手动改 `.env` 的 `TEACHER_PIN` / `ADMIN_PIN` | 改完重启生效 |
 
 `SECRET_KEY` 生成一条：`python -c "import secrets;print(secrets.token_hex(32))"`，粘进 `.env`。
 
@@ -25,26 +25,20 @@
 ### 2.1 手动启动
 
 ```bash
-python run.py
+scripts\run_server.bat
 ```
 
-控制台会打印监听地址、数据目录、模型模式、是否演示模式、教师口令——这几行就是现场排障的第一手信息。
+控制台会打印监听地址、数据目录、五个引擎模式、是否演示模式、教师口令——这几行就是现场排障的第一手信息。
 
-### 2.2 Windows 开机自启（教室机器人常见）
+### 2.2 Windows 开机自启
 
-1. 新建 `start_robot.bat`（放项目根目录）：
+`scripts\install.ps1` 会把 `scripts\run_server.bat` 的快捷方式放进当前用户的「启动」目录，登录即自动跑。
+手动改的话：「任务计划程序」→ 创建任务：
+- 触发器：**登录时**（或开机时）
+- 操作：启动 `scripts\run_server.bat`
+- 勾选「不管用户是否登录都运行」时注意：`getUserMedia` 需要有人在前台登录的桌面会话，机器人必须保持登录状态
 
-```bat
-@echo off
-cd /d D:\program\reading-ai
-python run.py >> _tools\server.log 2>&1
-```
-
-2. 「任务计划程序」→ 创建任务：
-   - 触发器：**登录时**（或开机时）
-   - 操作：启动 `start_robot.bat`
-   - 勾选「不管用户是否登录都运行」时注意：`getUserMedia` 需要有人在前台登录的桌面会话，机器人必须保持登录状态
-3. 重启机器验证一次：`curl http://127.0.0.1:8000/healthz` 应返回 `"ok": true`。
+重启机器验证一次：`curl http://127.0.0.1:8000/healthz` 应返回 `"ok": true`。
 
 ### 2.3 Linux 开机自启（systemd）
 
@@ -122,7 +116,8 @@ WantedBy=multi-user.target
 | --- | --- | --- |
 | ESP32-CAM | `http://<esp32-ip>/capture` | CameraWebServer 示例自带；把绘本卡在支架上、分辨率设 640×480 或 800×600 就够 |
 | 手机（IP Webcam / DroidCam 等） | `http://<手机-ip>:8080/shot.jpg` | 以 App 启动页显示的「抓帧地址」为准；手机与机器人要连同一个 WiFi |
-| 电脑 USB / 内置摄像头 | 先跑 `python _tools\camera_bridge.py`，再填它打印的 `http://<电脑-ip>:8081/capture` | 外接 USB 常是 `--index 1`；`--size 1280x720` 可调 |
+| 电脑 USB / 内置摄像头 | 面板里填 `camera:0`（第二个写 `camera:1`） | 服务端直接拍帧，不用另开桥接 |
+| 只能用 http 地址的旧机器人 | 先跑 `python _tools\camera_bridge.py`，再填它打印的 `http://<电脑-ip>:8081/capture` | 外接 USB 常是 `--index 1`；`--size 1280x720` 可调 |
 | 只给 RTSP 的老机器人/网络摄像头 | `python _tools\camera_bridge.py --url rtsp://<摄像头-ip>:554/...` 然后用桥接的 http 地址 | 浏览器不能直放 RTSP，必须转一道；面板里直接填 `rtsp://` 会当场提示 |
 | 要网页登录的摄像头（海康/大华等） | `http://<账号>:<密码>@<摄像头-ip>/<抓帧路径>` | Basic / Digest 都支持；密码里有 `@`、`:` 时先在摄像头后台换一个简单密码 |
 
@@ -187,7 +182,7 @@ WantedBy=multi-user.target
 | 每步识别与自检 | 教师端会话页实时事件流（识别结果、摘要、问题、检查项） |
 | 各阶段耗时、最慢页面 | 教师端「运维」面板，读 `metrics` 表 |
 | 谁做了什么敏感操作 | `audit_log` 表（老师登录、建会话、结束会话、改题库、清数据） |
-| 启动与异常 | 控制台输出或 `_tools/server.log`，搜索 `Traceback` |
+| 启动与异常 | `data/server.log`（控制台也同步打印），搜索 `Traceback` |
 
 状态条含义：
 
@@ -202,7 +197,7 @@ WantedBy=multi-user.target
 
 | 现象 | 先查什么 | 处理 |
 | --- | --- | --- |
-| 机器人空白/打不开 | `curl http://<ip>:8000/healthz` | 服务没起：看 `server.log`；起了：查防火墙、`HOST` 是否 `0.0.0.0` |
+| 机器人空白/打不开 | `curl http://<ip>:8000/healthz` | 服务没起：看 `data/server.log`；起了：查防火墙、`HOST` 是否 `0.0.0.0` |
 | 一直「重连中」后转「兼容模式」 | 教师端还开着吗、网线/WiFi | 兼容模式本身可用；恢复网络后刷新页面即回「实时」 |
 | 提示「这次共读已经结束了」 | 老师是否点了结束、服务是否重启过 | 重新开一次会话，发新链接 |
 | 拍照按钮没反应 | 是不是局域网 http | 见 §3：改本机访问 / https / 用系统相机 |
@@ -225,10 +220,10 @@ WantedBy=multi-user.target
 ## 7. 验收清单（每次上架/换机跑一遍）
 
 ```bash
-python -m pytest tests -q            # 应为 63 passed
+python -m pytest tests -q            # 应为 100 passed
 python _tools\check_imports.py       # 无报错
 python run.py                        # 另开一个终端
-python _tools\live_smoke.py          # 结尾打印"链路自检全部通过"
+python _tools\live_smoke.py          # 全程断言通过，证据落 _tools\shots\live_smoke.json
 ```
 
 - [ ] `/healthz` 返回 `ok: true`，`demo_mode` 符合预期（没接模型就该是 true）

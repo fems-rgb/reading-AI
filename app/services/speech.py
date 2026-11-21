@@ -11,11 +11,17 @@ import base64
 import hashlib
 import json
 import math
+import os
 import struct
+import subprocess
+import tempfile
+import threading
 import time
 import urllib.request
 import wave
 from pathlib import Path
+
+import numpy as np
 
 from .. import guard
 from ..config import get_settings
@@ -71,6 +77,8 @@ def synthesize(text: str, voice: str = "") -> dict:
     voice = voice or settings.tts_voice
     if not text:
         return {"url": "", "duration": 0.0, "mode": "none"}
+    if settings.tts_mode == "local":
+        return _synthesize_local(text, voice)
     if settings.tts_mode == "http":
         return _synthesize_http(text, voice)
     key = short_hash(f"{voice}:{text}")
@@ -84,6 +92,68 @@ def synthesize(text: str, voice: str = "") -> dict:
         "mode": "stub",
         "text": text,
     }
+
+
+_TTS_LOCK = threading.Lock()
+
+
+def _synthesize_local(text: str, voice: str) -> dict:
+    """本机 SAPI 中文女声：不联网、不占显卡，园里电脑装好系统就能发声。"""
+    settings = get_settings()
+    key = short_hash(f"local:{voice}:{text}")
+    path = settings.tts_dir / f"{key}.wav"
+    if not path.exists():
+        with _TTS_LOCK:
+            if not path.exists():
+                _sapi_save(text, voice, path)
+    audio = path.read_bytes() if path.exists() else b""
+    if not audio:
+        raise RuntimeError("本机语音合成没有生成音频：检查 Windows 中文语音包")
+    return {
+        "url": f"/media/tts/{key}.wav",
+        "duration": _wav_duration(audio),
+        "mode": "sapi5",
+        "text": text,
+    }
+
+
+def _sapi_save(text: str, voice: str, path: Path) -> None:
+    try:
+        import pythoncom
+        import pyttsx3
+    except ImportError as exc:
+        raise RuntimeError("本机 TTS 没装：pip install pyttsx3") from exc
+    pythoncom.CoInitialize()
+    engine = pyttsx3.init()
+    try:
+        chosen = _pick_voice(engine, voice)
+        if chosen:
+            engine.setProperty("voice", chosen)
+        engine.setProperty("rate", 150)  # 比成人默认语速慢一点，孩子听得清
+        engine.save_to_file(text, str(path))
+        engine.runAndWait()
+    finally:
+        try:
+            engine.stop()
+        except Exception:
+            pass
+        pythoncom.CoUninitialize()
+
+
+def _pick_voice(engine, wanted: str) -> str:
+    """按名字选；选不到就用第一个中文语音（Windows 自带 Huihui）。"""
+    voices = list(engine.getProperty("voices") or [])
+    wanted = (wanted or "").strip().lower()
+    if wanted and wanted not in {"zh-cn-kids", "kids"}:
+        for candidate in voices:
+            blob = f"{getattr(candidate, 'name', '')} {getattr(candidate, 'id', '')}".lower()
+            if wanted in blob:
+                return candidate.id
+    for candidate in voices:
+        blob = f"{getattr(candidate, 'name', '')} {getattr(candidate, 'id', '')} {getattr(candidate, 'languages', '')}".lower()
+        if any(mark in blob for mark in ("zh", "chinese", "huihui")):
+            return candidate.id
+    return voices[0].id if voices else ""
 
 
 def _synthesize_http(text: str, voice: str) -> dict:
@@ -157,6 +227,8 @@ def transcribe(audio: bytes, language: str = "zh") -> dict:
     settings = get_settings()
     if not audio:
         return {"text": "", "confidence": 0.0, "mode": "empty"}
+    if settings.asr_mode == "local":
+        return _transcribe_local(audio, language)
     if settings.asr_mode == "http":
         return _transcribe_http(audio, language)
     digest = hashlib.sha256(audio).hexdigest()
@@ -185,5 +257,80 @@ def _transcribe_http(audio: bytes, language: str) -> dict:
         "text": data.get("text", ""),
         "confidence": float(data.get("confidence") or 0.0),
         "mode": "funasr",
+        "language": language,
+    }
+
+
+_ASR_LOCK = threading.Lock()
+_ASR_MODEL = None
+
+
+def _whisper():
+    """faster-whisper 按进程只加载一次：模型必须在本地，运行时不去下载。"""
+    global _ASR_MODEL
+    if _ASR_MODEL is None:
+        with _ASR_LOCK:
+            if _ASR_MODEL is None:
+                settings = get_settings()
+                try:
+                    from faster_whisper import WhisperModel
+                except ImportError as exc:
+                    raise RuntimeError("本机 ASR 没装：pip install faster-whisper") from exc
+                _ASR_MODEL = WhisperModel(
+                    settings.asr_model,
+                    device=settings.asr_device,
+                    compute_type=settings.asr_compute_type,
+                    download_root=str(settings.asr_model_dir),
+                    local_files_only=True,
+                )
+    return _ASR_MODEL
+
+
+def _decode_16k(audio: bytes, ffmpeg: str) -> np.ndarray:
+    """浏览器给的 webm/ogg/wav 统一转 16k 单声道，再交给 whisper。"""
+    with tempfile.TemporaryDirectory(prefix="reading-ai-") as folder:
+        source = Path(folder) / "input.bin"
+        source.write_bytes(audio)
+        target = Path(folder) / "asr.wav"
+        try:
+            subprocess.run(
+                [ffmpeg, "-y", "-loglevel", "error", "-i", str(source),
+                 "-ac", "1", "-ar", "16000", "-f", "wav", str(target)],
+                check=True, capture_output=True, timeout=30,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError("音频转码失败：检查 ffmpeg 是否装好") from exc
+        with wave.open(str(target)) as handle:
+            raw = handle.readframes(handle.getnframes())
+    return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+
+
+def _transcribe_local(audio: bytes, language: str) -> dict:
+    settings = get_settings()
+    try:
+        model = _whisper()
+        samples = _decode_16k(audio, settings.ffmpeg_bin)
+    except Exception as exc:
+        return {
+            "text": "", "confidence": 0.0, "mode": "unavailable",
+            "language": language, "error": str(exc)[:120],
+        }
+    with _ASR_LOCK:
+        segments, _info = model.transcribe(
+            samples,
+            language=language,
+            vad_filter=True,
+            beam_size=5,
+            # 中文绘本场景：明确要求简体，避免输出繁体/英文
+            initial_prompt="以下是普通话的句子，请用简体中文转写。",
+        )
+        segments = list(segments)
+    text = "".join(segment.text for segment in segments).strip()
+    logs = [segment.avg_logprob for segment in segments if segment.avg_logprob is not None]
+    confidence = math.exp(sum(logs) / len(logs)) if logs else 0.0
+    return {
+        "text": text,
+        "confidence": round(max(0.0, min(1.0, confidence)), 3),
+        "mode": f"faster-whisper:{settings.asr_model}",
         "language": language,
     }

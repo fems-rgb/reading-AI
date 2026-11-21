@@ -1,7 +1,7 @@
-"""演示数据：第一次启动时自动铺一本绘本、几个孩子、一次已结束的共读。
+"""开发/演示用示例数据：一支绘本、几个孩子、一次已结束的共读。
 
-真实部署请用 `python -m scripts.reset_demo` 清空后重新录入，
-或直接在教师端删除示例数据。
+真实部署不会执行：``SEED_DEMO=1`` 才会铺（默认 0），园里首次启动是空库，
+老师在教师端录入自己班的孩子和绘本。
 """
 
 from __future__ import annotations
@@ -64,6 +64,8 @@ def _page_image(book_id: int, page_no: int, variant: int) -> str:
 
 
 def ensure_seed() -> None:
+    if not get_settings().seed_demo:
+        return
     if db.list_books():
         return
 

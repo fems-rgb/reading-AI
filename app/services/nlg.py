@@ -212,6 +212,33 @@ def _distractor(present: list[str]) -> str:
     return ""
 
 
+def reply_for(action: str, facts: dict, answer: str, confidence: float = 0.0) -> str:
+    """回复话术统一由规则生成，LLM 只负责判断“懂没懂”。
+
+    实测小模型会把问句和孩子的答案说反（“刚才你说的是床上挂着什么颜色的
+    窗帘，不是手机”）；面向孩子的话不能交给它自由发挥，但“理解判断”
+    （yes/partial/no）仍用模型，因为它比关键词规则更准。
+    """
+    answer = (answer or "").strip()
+    visible = " ".join(
+        [str(item) for item in (facts.get("characters") or []) + (facts.get("objects") or [])]
+    )
+    hit = [noun for noun in lexicon.find_nouns(answer) if noun in visible]
+    if action == "encourage":
+        return f"哇，你看到{hit[0]}了，真仔细！" if hit else "说得真好，你看得真仔细！"
+    if action == "confirm":
+        return f"你是不是说「{truncate(answer, 8)}」？" if answer else "我们一起再看看这里。"
+    if action == "give_answer":
+        return f"没关系，{_answer_hint(facts)}"
+    if action == "answer_why":
+        return "你看，它们在一起呢，我们再仔细看看。"
+    if action == "icon_choice":
+        return "没关系，我们一起看看这里……"
+    if answer:
+        return f"嗯，你说「{truncate(answer, 8)}」了。我们一起看看画面里还有什么。"
+    return "嗯，我们一起再看看这里。"
+
+
 def understand(facts: dict, question_text: str, answer: str, age_months: int, confidence: float) -> dict:
     """A7：只判"听没听懂"，不打分、不贴标签。"""
     answer = (answer or "").strip()

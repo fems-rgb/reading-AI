@@ -17,10 +17,13 @@ ENV_FILE = ROOT / ".env"
 
 
 def _load_env_file() -> None:
-    """极简 .env 解析：不覆盖已存在的真实环境变量。"""
+    """极简 .env 解析：不覆盖已存在的真实环境变量。
+
+    兼容 Windows 记事本 / PowerShell 写出的 UTF-8 BOM。
+    """
     if not ENV_FILE.exists():
         return
-    for raw_line in ENV_FILE.read_text(encoding="utf-8").splitlines():
+    for raw_line in ENV_FILE.read_text(encoding="utf-8-sig").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -77,6 +80,7 @@ class Settings:
     daily_call_limit: int
     asr_confirm_threshold: float
     keep_page_image: bool
+    seed_demo: bool
 
     ocr_mode: str
     vlm_mode: str
@@ -89,9 +93,19 @@ class Settings:
     vlm_model: str
     llm_url: str
     llm_model: str
+    # 单次生成上限：防止模型“想太久”把孩子晾在那；正常 JSON 输出几十 token 就够
+    llm_max_tokens: int
     asr_url: str
     tts_url: str
     tts_voice: str
+
+    # 本机引擎（模式 = local 时生效）：不联网，模型/引擎都装在这台机器上
+    asr_model: str
+    asr_device: str
+    asr_compute_type: str
+    asr_model_dir: Path
+    tts_local_voice: str
+    ffmpeg_bin: str
 
     @property
     def demo_mode(self) -> bool:
@@ -128,6 +142,9 @@ def get_settings() -> Settings:
     data_dir = Path(_text("DATA_DIR", "data"))
     if not data_dir.is_absolute():
         data_dir = ROOT / data_dir
+    asr_dir = Path(_text("ASR_MODEL_DIR", "models/whisper"))
+    if not asr_dir.is_absolute():
+        asr_dir = ROOT / asr_dir
     allowed = tuple(
         item.strip().lower()
         for item in _text("ALLOWED_HOSTS").split(",")
@@ -153,6 +170,8 @@ def get_settings() -> Settings:
         daily_call_limit=_whole("DAILY_CALL_LIMIT", 3000),
         asr_confirm_threshold=_number("ASR_CONFIRM_THRESHOLD", 0.75),
         keep_page_image=_flag("KEEP_PAGE_IMAGE", False),
+        # 真实部署默认空库；只有开发/演示时才铺示例孩子与绘本
+        seed_demo=_flag("SEED_DEMO", False),
         ocr_mode=_text("OCR_MODE", "stub").lower(),
         vlm_mode=_text("VLM_MODE", "stub").lower(),
         llm_mode=_text("LLM_MODE", "stub").lower(),
@@ -163,9 +182,16 @@ def get_settings() -> Settings:
         vlm_model=_text("VLM_MODEL", "qwen3-vl-8b-instruct"),
         llm_url=_text("LLM_URL", "http://127.0.0.1:9103/v1").rstrip("/"),
         llm_model=_text("LLM_MODEL", "qwen3-8b-instruct"),
+        llm_max_tokens=_whole("LLM_MAX_TOKENS", 768),
         asr_url=_text("ASR_URL", "http://127.0.0.1:9104").rstrip("/"),
         tts_url=_text("TTS_URL", "http://127.0.0.1:9105").rstrip("/"),
         tts_voice=_text("TTS_VOICE", "zh-CN-kids"),
+        asr_model=_text("ASR_MODEL", "small"),
+        asr_device=_text("ASR_DEVICE", "cpu"),
+        asr_compute_type=_text("ASR_COMPUTE_TYPE", "int8"),
+        asr_model_dir=asr_dir,
+        tts_local_voice=_text("TTS_LOCAL_VOICE", ""),
+        ffmpeg_bin=_text("FFMPEG_BIN", "ffmpeg"),
     )
     settings.ensure_dirs()
     return settings

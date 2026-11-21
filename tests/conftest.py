@@ -14,6 +14,12 @@ os.environ["DATA_DIR"] = _TMP
 os.environ["SECRET_KEY"] = "test-secret-key"
 os.environ["TEACHER_PIN"] = "2026"
 os.environ["ADMIN_PIN"] = "8642"
+# 园里真实部署的 .env 不能漏进测试：统一锁定确定性 stub，保证测试快且可重复
+for _mode in ("OCR_MODE", "VLM_MODE", "LLM_MODE", "ASR_MODE", "TTS_MODE"):
+    os.environ[_mode] = "stub"
+os.environ["OFFLINE_ONLY"] = "1"
+# 测试需要固定的一套示例孩子/绘本（真实部署默认空库，见 app/seed.py）
+os.environ["SEED_DEMO"] = "1"
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

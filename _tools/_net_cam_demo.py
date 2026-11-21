@@ -34,7 +34,12 @@ sys.stdout.reconfigure(encoding="utf-8")
 ROOT = Path(__file__).resolve().parent.parent
 SHOTS = ROOT / "_tools" / "shots"
 BASE = "http://127.0.0.1:8000"
-PIN = "2026"
+# 口令从 .env 读，不能在脚本里写死：真实部署的老师口令不是默认值
+sys.path.insert(0, str(ROOT))
+from app.config import get_settings  # noqa: E402
+
+SETTINGS = get_settings()
+PIN = SETTINGS.teacher_pin
 CAM_PORT = 8091
 CAM_URL = f"http://127.0.0.1:{CAM_PORT}/capture"
 MJPEG_URL = f"http://127.0.0.1:{CAM_PORT}/stream"
@@ -189,7 +194,23 @@ def main() -> int:
         assert post_json("/api/login", {"pin": PIN}).ok
         children = api.get(f"{BASE}/api/teacher/children").json()["items"]
         books = api.get(f"{BASE}/api/teacher/books").json()["items"]
-        child = next(item for item in children if item["name"] == "小雨")
+        assert books, "库里没有绘本：先在教师端建一本再跑这个验证"
+        # 真实部署没有开发期的“小雨”，找不到就自己建一个验证孩子，
+        # 跑完连同 4 个会话一起删掉，不给园里留测试数据。
+        target = next((item for item in children if item["name"] == "小雨"), None)
+        own_child = target is None
+        if own_child:
+            made = post_json("/api/teacher/children", {
+                "name": "网络摄像头验证",
+                "age_years": 4.5,
+                "class_name": "验证班",
+                "guardian_name": "验证家长",
+                "guardian_consent": True,
+            })
+            assert made.ok, made.text()
+            children = api.get(f"{BASE}/api/teacher/children").json()["items"]
+            target = next(item for item in children if item["name"] == "网络摄像头验证")
+        child = target
 
         def new_session() -> tuple[str, str, str]:
             created = post_json(
@@ -352,10 +373,21 @@ def main() -> int:
             post_json(f"/api/teacher/sessions/{third_id}/end", {}).ok,
             post_json(f"/api/teacher/sessions/{fourth_id}/end", {}).ok,
         ]
+        if own_child:
+            # 管理员口令才能删孩子；删孩子会连带会话/回合，不留验证残留
+            if post_json("/api/login", {"pin": SETTINGS.admin_pin}).ok:
+                removed = api.delete(f"{BASE}/api/teacher/children/{child['id']}")
+                report["cleaned"] = removed.ok
+            else:
+                report["cleaned"] = False
         browser.close()
 
     server.shutdown()
     server.server_close()
+    # 落盘一份报告：复核脚本只认这份证据，不认控制台自己打印的“通过”
+    report_path = SHOTS / "net_cam_report.json"
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    report["report_path"] = str(report_path)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 

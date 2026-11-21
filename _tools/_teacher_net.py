@@ -51,8 +51,12 @@ def main() -> int:
         )
         path2 = SHOTS / "16_teacher_net_captured.png"
         page.screenshot(path=str(path2))
-        print(json.dumps({"choices": choices, "hint": page.inner_text("#src-hint"),
-                          "shots": [str(path), str(path2)], "console_errors": errors}, ensure_ascii=False, indent=2))
+        payload = {"choices": choices, "hint": page.inner_text("#src-hint"),
+                   "shots": [str(path), str(path2)], "console_errors": errors}
+        (SHOTS / "teacher_net_report.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         browser.close()
     server.shutdown()
     return 0
