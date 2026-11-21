@@ -1,0 +1,15 @@
+# 运行主程序所需依赖（全部离线可用，不访问外网）
+fastapi>=0.110
+uvicorn>=0.27
+jinja2>=3.1
+python-multipart>=0.0.9
+pillow>=10.0
+
+# 测试
+pytest>=8.0
+httpx>=0.27
+
+# 本地模型接入（默认不安装；见 docs/LOCAL_MODELS.md）
+# paddleocr>=2.8        # A1 文字识别
+# funasr>=1.1           # A6 童声 ASR
+# soundfile>=0.12       # 音频读写

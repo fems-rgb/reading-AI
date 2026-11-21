@@ -1,0 +1,241 @@
+{% extends "base.html" %}
+{% block title %}教师端 · 绘本阅读陪伴 AI{% endblock %}
+{% block content %}
+<header class="site-head">
+  <div class="brand">
+    <div class="brand-mark">🧑‍🏫</div>
+    <div>
+      <h1>教师端</h1>
+      <p>{{ '管理员' if role == 'admin' else '老师' }} · 全部数据在本机</p>
+    </div>
+  </div>
+  <div class="row">
+    {% if demo_mode %}<span class="pill warn">演示模式</span>{% else %}<span class="pill ok">本地模型</span>{% endif %}
+    <a class="btn ghost small" href="/">首页</a>
+    <button class="btn ghost small" onclick="logout()">退出</button>
+  </div>
+</header>
+
+<div id="selfcheck-strip" class="demo-banner" style="display:none"></div>
+
+<div class="tabs" id="tabs">
+  <button class="tab active" data-tab="overview">今日概览</button>
+  <button class="tab" data-tab="live">开始共读</button>
+  <button class="tab" data-tab="library">绘本库 / 题库</button>
+  <button class="tab" data-tab="advice">教学建议</button>
+  <button class="tab" data-tab="reports">周报与授权</button>
+  <button class="tab" data-tab="ops">自检与运维</button>
+</div>
+
+<!-- ============ 概览 ============ -->
+<section id="tab-overview">
+  <div class="kpi">
+    <div class="card"><b id="kpi-pages">–</b><span>今日共读页数</span></div>
+    <div class="card"><b id="kpi-answered">–</b><span>今日有回应</span></div>
+    <div class="card"><b id="kpi-advice">–</b><span>待处理建议</span></div>
+    <div class="card"><b id="kpi-blocked">–</b><span>今日自检拦截</span></div>
+  </div>
+
+  <div class="grid cols-2" style="margin-top:16px">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2>AI 自检（今日）</h2>
+        <button class="btn ghost small" onclick="runSystemCheck()">运行系统自检</button>
+      </div>
+      <p class="hint">每条要念给孩子听的文本都过闸门；拦截后会重写或降级为安全模板。</p>
+      <div class="statline" style="margin-top:14px">
+        <div class="stat"><b id="sc-total">0</b><span>检查次数</span></div>
+        <div class="stat"><b id="sc-pass">0</b><span>一次通过</span></div>
+        <div class="stat"><b id="sc-rewrite">0</b><span>自动修正</span></div>
+        <div class="stat"><b id="sc-block">0</b><span>拦截降级</span></div>
+        <div class="stat"><b id="sc-score">0</b><span>平均分</span></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>运行状态</h2>
+      <p class="hint">本地模型调用次数、延迟与失败率（无 token 费用）。</p>
+      <div class="statline" style="margin-top:14px">
+        <div class="stat"><b id="mt-calls">0</b><span>今日调用</span></div>
+        <div class="stat"><b id="mt-latency">0 ms</b><span>平均耗时</span></div>
+        <div class="stat"><b id="mt-fail">0%</b><span>失败率</span></div>
+        <div class="stat"><b id="mt-tokens">0</b><span>本地 token</span></div>
+      </div>
+      <div class="row" style="margin-top:14px" id="mode-pills"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>进行中的共读</h2>
+    <div id="active-sessions" class="list" style="margin-top:12px"></div>
+  </div>
+</section>
+
+<!-- ============ 共读 ============ -->
+<section id="tab-live" style="display:none">
+  <div class="card">
+    <h2>开始一次共读</h2>
+    <p class="hint">选孩子 → 选绘本 → 打开机器人端链接。设备上没有按键配置，老师只做三步。</p>
+    <div class="grid cols-3" style="margin-top:14px">
+      <div class="field"><label>孩子</label><select id="live-child"></select></div>
+      <div class="field"><label>绘本</label><select id="live-book"></select></div>
+      <div class="field"><label>&nbsp;</label><button class="btn" onclick="startSession()">开始共读</button></div>
+    </div>
+    <div id="session-start" style="display:none"></div>
+  </div>
+
+  <div class="grid cols-2" style="margin-top:16px;align-items:start">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <h2>实时会话</h2>
+        <span class="pill" id="live-state">未开始</span>
+      </div>
+      <div id="live-head" class="small muted" style="margin-top:6px">还没有进行中的共读。</div>
+      <div id="live-stage" style="margin-top:14px"></div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn ghost small" onclick="control('reask')">重问</button>
+        <button class="btn ghost small" onclick="control('skip')">跳过</button>
+        <button class="btn ghost small" onclick="control('teacher_talk')">我来讲</button>
+        <button class="btn ghost small" onclick="control('pause')">暂停</button>
+        <span class="spacer"></span>
+        <button class="btn small" onclick="endSession()">结束并生成建议</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>本次问答</h2>
+      <p class="hint">每一条都带自检结论，点开可看具体检查项。</p>
+      <div id="live-timeline" class="timeline" style="margin-top:12px"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 绘本库 ============ -->
+<section id="tab-library" style="display:none">
+  <div class="grid cols-2" style="align-items:start">
+    <div class="card">
+      <h2>绘本库</h2>
+      <p class="hint">上传即本地预识别；识别不出就标"待校对"，不会假装成功。</p>
+      <div id="book-list" class="list" style="margin-top:12px"></div>
+    </div>
+    <div>
+      <div class="card">
+        <h2>新建绘本</h2>
+        <div class="field"><label>书名</label><input id="book-title" type="text" placeholder="例如：小兔子找风筝"></div>
+        <div class="grid cols-2">
+          <div class="field"><label>语言</label>
+            <select id="book-language"><option value="zh">中文</option><option value="en">英文</option></select>
+          </div>
+          <div class="field"><label>主题</label><input id="book-theme" type="text" placeholder="友情 / 自然"></div>
+        </div>
+        <button class="btn" onclick="createBook()">创建</button>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2>上传页面</h2>
+        <div class="grid cols-2">
+          <div class="field"><label>绘本</label><select id="upload-book"></select></div>
+          <div class="field"><label>页码</label><input id="upload-page-no" type="number" value="1" min="1"></div>
+        </div>
+        <div class="field"><label>页面照片</label><input id="upload-file" type="file" accept="image/*"></div>
+        <div class="row">
+          <button class="btn ghost" onclick="pickUploadPhoto()">拍照 / 截图 / 粘贴</button>
+          <button class="btn" onclick="uploadPage()">上传并预识别</button>
+        </div>
+        <p class="small muted" id="upload-picked" style="margin-top:8px">识别草稿需要老师校对后才会被机器人使用。</p>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <h2>题库</h2>
+        <div class="field"><label>绘本</label><select id="bank-book" onchange="loadBank()"></select></div>
+        <div id="bank-list" class="list"></div>
+        <div class="grid cols-3" style="margin-top:10px">
+          <div class="field"><label>挂在哪一页</label><select id="bank-page"></select></div>
+          <div class="field"><label>题目</label><input id="bank-text" type="text" placeholder="小兔子手里拿着什么呀？"></div>
+          <div class="field"><label>类型</label>
+            <select id="bank-type">
+              <option value="observe">观察型</option><option value="guess">猜想型</option>
+              <option value="empathy">共情型</option><option value="life">生活联结</option>
+              <option value="retell">复述型</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn small" onclick="addBank()">加入题库</button>
+        <p class="small muted">题库题目仍会过自检；提到画面里没有的东西会被拦下并现场重写。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 建议 ============ -->
+<section id="tab-advice" style="display:none">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div><h2>教学建议</h2><p class="hint">每条都能点开看到依据的问答记录；无依据的不生成。</p></div>
+      <button class="btn ghost small" onclick="loadAdvice()">刷新</button>
+    </div>
+    <div id="advice-list" class="list" style="margin-top:14px"></div>
+  </div>
+</section>
+
+<!-- ============ 周报 ============ -->
+<section id="tab-reports" style="display:none">
+  <div class="grid cols-2" style="align-items:start">
+    <div class="card">
+      <h2>孩子与授权</h2>
+      <p class="hint">周报需要监护人授权；撤回后周报与快照一并删除。</p>
+      <div id="children-list" class="list" style="margin-top:12px"></div>
+      <div class="grid cols-2" style="margin-top:14px">
+        <div class="field"><label>新孩子姓名</label><input id="child-name" type="text"></div>
+        <div class="field"><label>年龄（岁）</label><input id="child-age" type="number" value="4" step="0.5" min="1" max="8"></div>
+      </div>
+      <button class="btn" onclick="createChild()">加入班级</button>
+    </div>
+    <div class="card">
+      <h2>周报</h2>
+      <p class="hint">老师确认发布后，家长才会看到。卡片只含参与与阅读线索。</p>
+      <div class="list" id="report-list" style="margin-top:12px"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 运维 ============ -->
+<section id="tab-ops" style="display:none">
+  <div class="grid cols-2" style="align-items:start">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><h2>运行自检</h2><p class="hint">开场前检查：记录、存储、模型服务、离线出站、绘本库、授权。</p></div>
+        <button class="btn small" onclick="runSystemCheck(true)">运行自检</button>
+      </div>
+      <div id="system-check" style="margin-top:12px" class="list"></div>
+    </div>
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><h2>内容自检演示</h2><p class="hint">用几条"坏例子"看看闸门怎么拦：画外实体、抽象词、超长、重复、排名。</p></div>
+        <button class="btn ghost small" onclick="runDemo()">跑一遍</button>
+      </div>
+      <div id="demo-check" style="margin-top:12px" class="list"></div>
+    </div>
+  </div>
+
+  <div class="grid cols-2" style="margin-top:16px;align-items:start">
+    <div class="card">
+      <h2>自检历史</h2>
+      <div id="check-history" style="margin-top:12px"></div>
+    </div>
+    <div class="card">
+      <h2>高耗时页面 Top 10</h2>
+      <div id="slow-pages" style="margin-top:12px"></div>
+      <div class="row" style="margin-top:14px">
+        <button class="btn ghost small" onclick="runAudit()">出站流量审计</button>
+      </div>
+      <div id="audit-result" class="small muted" style="margin-top:8px"></div>
+    </div>
+  </div>
+</section>
+
+<div class="modal-mask" id="modal-mask">
+  <div class="modal" id="modal-body"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>window.TEACHER_ROLE = "{{ role }}";</script>
+<script src="/static/capture.js"></script>
+<script src="/static/teacher.js"></script>
+{% endblock %}

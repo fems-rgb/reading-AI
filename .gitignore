@@ -1,0 +1,32 @@
+# 运行时数据：SQLite、上传的绘本页、录音、TTS 缓存，一律不入库
+data/
+
+# 本地配置与密钥：只提交 .env.example
+.env
+.env.*
+!.env.example
+
+# Python 缓存与虚拟环境
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# 本地验证产物（截图、日志、临时探针输出）
+_tools/shots/
+_tools/shot_*.png
+_tools/*.log
+_tools/*.txt
+*.log
+
+# 旧版遗留目录：语音样本与截图是验证产物，不入库（.env.example 已脱敏，保留作示例）
+legacy_y/**/*.wav
+legacy_y/**/*.png
+legacy_y/**/*.jpg
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>设备自检 · 绘本共读</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="robot-body">
+<div class="robot-head">
+  <div>设备自检 · 换机或上架前跑一遍</div>
+  <a class="btn ghost" href="/teacher">回教师端</a>
+</div>
+<main class="robot-main">
+  <div class="state-pill" id="summary"><span class="dot"></span><span id="summary-text">检查中…</span></div>
+
+  <section class="stage check-card">
+    <h3>能力清单</h3>
+    <table class="table" id="caps"><tbody></tbody></table>
+    <p class="small muted" id="id-line"></p>
+  </section>
+
+  <section class="stage check-card">
+    <h3>摄像头</h3>
+    <video id="cam" playsinline muted class="check-video"></video>
+    <div class="robot-side check-row">
+      <button class="btn" id="cam-start">打开摄像头</button>
+      <select class="btn ghost" id="cam-list" aria-label="选择摄像头" hidden></select>
+    </div>
+    <p class="small muted" id="cam-note">打开后能看到实时画面，就说明机器人能拍绘本。</p>
+  </section>
+
+  <section class="stage check-card">
+    <h3>网络摄像头（可选）</h3>
+    <img id="netcam-img" alt="网络摄像头预览" class="check-video" hidden>
+    <div class="robot-side check-row">
+      <input id="netcam-url" class="btn ghost" placeholder="http://192.168.1.50/capture" style="flex:1;min-width:200px">
+      <button class="btn" id="netcam-run">试一下</button>
+    </div>
+    <p class="small muted" id="netcam-note">ESP32-CAM 填 /capture，手机 IP Webcam 填 /shot.jpg，电脑摄像头先跑 _tools/camera_bridge.py。试通过的地址会记进取图面板。</p>
+  </section>
+
+  <section class="stage check-card">
+    <h3>麦克风</h3>
+    <div class="meter"><div class="meter-fill" id="mic-fill"></div></div>
+    <div class="robot-side check-row">
+      <button class="btn" id="mic-start">开始检测</button>
+      <button class="btn ghost" id="mic-stop" hidden>停止</button>
+    </div>
+    <p class="small muted" id="mic-note">对着设备说一句话，绿色条会跟着动。</p>
+  </section>
+
+  <section class="stage check-card">
+    <h3>喇叭</h3>
+    <div class="robot-side check-row">
+      <button class="btn" id="spk-play">播一声</button>
+    </div>
+    <p class="small muted" id="spk-note">听到「叮」就说明音量与播放正常。</p>
+  </section>
+
+  <section class="stage check-card">
+    <h3>网络</h3>
+    <p class="small muted" id="net-note">还没测。局域网抖动大时，机器人端会自动切兼容模式。</p>
+    <div class="robot-side check-row">
+      <button class="btn" id="net-run">测一次往返</button>
+      <button class="btn ghost" id="copy">复制设备信息</button>
+    </div>
+  </section>
+</main>
+<p class="small muted" id="old-note" hidden style="text-align:center;color:#b4552d">
+  这个浏览器太旧，检测脚本跑不起来。请换 Chrome 80+ / Edge 80+ / Safari 14+ 再试。
+</p>
+<script>
+  // 这段故意用 ES5 写：下面的脚本在旧浏览器里会直接语法错误，连提示都出不来
+  (function () {
+    try { new Function('const o={a:1};return o?.a;')(); }
+    catch (error) {
+      var note = document.getElementById('old-note');
+      if (note) note.hidden = false;
+      var text = document.getElementById('summary-text');
+      if (text) text.textContent = '浏览器太旧';
+    }
+  })();
+</script>
+<div class="toast" id="toast"></div>
+<script src="/static/device.js"></script>
+<script src="/static/device_check.js"></script>
+</body>
+</html>

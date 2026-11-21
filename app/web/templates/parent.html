@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}{{ child.name if child else '家长周报' }} · 本周阅读{% endblock %}
+{% block content %}
+{% if not child %}
+  <div class="parent-card">
+    <div class="top"><h2>链接已失效</h2><p>请找老师重新获取周报链接。</p></div>
+    <div class="body"><p class="note">{{ human_hint }}</p></div>
+  </div>
+{% else %}
+<div class="parent-card">
+  <div class="top">
+    <h2>{{ child.name }} 的本周阅读卡片</h2>
+    <p>{{ age }} · {{ report.payload.week_start if report else '' }}{% if report %} 至 {{ report.payload.week_end }}{% endif %}</p>
+  </div>
+  <div class="body">
+    {% if report %}
+      <div>
+        <h3 style="font-size:17px">{{ report.payload.headline }}</h3>
+        <p class="note" style="margin-top:4px">{{ report.payload.summary }}</p>
+      </div>
+      {% if report.payload.highlights %}
+        {% for line in report.payload.highlights %}
+          <div class="hl">{{ line }}</div>
+        {% endfor %}
+      {% endif %}
+      {% if report.payload.teacher_note %}
+        <div>
+          <div class="small muted">老师的一句话</div>
+          <div style="font-size:15px">{{ report.payload.teacher_note }}</div>
+        </div>
+      {% endif %}
+      <div class="hl" style="background:#fff8ec;border-color:#f3dcb6">
+        {{ report.payload.suggest_home }}
+      </div>
+      <p class="small muted">
+        这份卡片只包含参与情况与阅读线索，不含排名、不含音视频。
+        数据保存在幼儿园本地服务器；授权到期或撤回后会自动删除。
+      </p>
+    {% else %}
+      <div class="empty">
+        <p style="font-size:32px;margin-bottom:8px">🌱</p>
+        <p>{{ human_hint }}</p>
+      </div>
+    {% endif %}
+  </div>
+  <div class="foot">
+    <div class="row">
+      <button class="btn ghost small" onclick="revoke()">撤回授权并删除周报</button>
+      <a class="btn ghost small" href="/">回到首页</a>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+  async function revoke() {
+    if (!confirm('撤回后，已生成的周报会立即删除，确定吗？')) return;
+    try {
+      const data = await api('/api/parent/{{ token }}/revoke', {method: 'POST', body: '{}'});
+      toast(data.human_hint || '已撤回授权');
+      setTimeout(() => location.reload(), 1200);
+    } catch (error) {
+      toast(error.message);
+    }
+  }
+</script>
+{% endblock %}

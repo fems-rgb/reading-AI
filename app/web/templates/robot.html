@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>机器人端 · 绘本共读</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="robot-body">
+<div class="robot-head">
+  <div>
+    {% if session %}
+      {{ child.name }} · 《{{ book.title }}》{% if book.language == 'en' %} · English{% endif %}
+    {% else %}
+      机器人端
+    {% endif %}
+  </div>
+  <div class="conn" id="conn"><span class="dot"></span><span id="conn-text">连接中…</span></div>
+  <button class="icon-btn" id="fs-btn" aria-label="全屏" title="全屏">⛶</button>
+</div>
+
+<main class="robot-main">
+  <div class="state-pill live" id="state-pill">
+    <span class="dot"></span><span id="state-text">{{ '准备中' if session else '等待老师' }}</span>
+  </div>
+
+  <div class="stage" id="stage">
+    {% if session %}
+      <div class="placeholder">点下面的按钮，拍一页给我看（也可以选图片、截图或粘贴）</div>
+    {% else %}
+      <div class="placeholder">{{ human_hint }}</div>
+    {% endif %}
+  </div>
+
+  {% if session %}
+  <div class="big-actions">
+    <button class="big-btn" id="main-btn">拍第 1 页</button>
+  </div>
+  <div class="robot-side">
+    <button class="btn ghost" data-control="retake">重拍</button>
+    <button class="btn ghost" data-control="skip">跳过</button>
+    <button class="btn ghost" data-control="teacher_talk">我来讲</button>
+    <button class="btn ghost" data-control="reask">再听一遍</button>
+  </div>
+  <div class="choice-grid" id="choices"></div>
+  <div class="answer-bar" id="answer-bar" style="display:none">
+    <button class="btn talk" id="mic-btn">🎤 按住说话</button>
+    <input id="answer-input" type="text" placeholder="也可以把小朋友说的话打在这里">
+    <button class="btn" id="answer-send">说完了</button>
+  </div>
+  <p class="small muted" id="mode-note" style="text-align:center">
+    {% if demo_mode %}演示模式：语音播放为提示音，转写使用脚本样例。接入园内模型后无需改界面。{% endif %}
+    <span id="device-tag"></span>
+  </p>
+  <p class="small muted" id="old-browser" hidden style="text-align:center;color:#b4552d">
+    这个浏览器版本偏旧，界面可能显示不全；建议换 Chrome / Edge / Safari 的新版本。
+  </p>
+  {% else %}
+  <a class="btn" href="/teacher">去教师端开始共读</a>
+  {% endif %}
+</main>
+
+<input type="file" id="camera" accept="image/*" capture="environment" hidden>
+<div id="toast" class="toast"></div>
+
+{% if session %}
+<script>
+  window.ROBOT = {
+    sessionId: "{{ session.id }}",
+    token: "{{ token }}",
+    child: "{{ child.name }}",
+    book: "{{ book.title }}",
+    pagesTotal: {{ pages_total }},
+  };
+</script>
+<script src="/static/device.js"></script>
+<script src="/static/capture.js"></script>
+<script src="/static/robot.js"></script>
+{% endif %}
+</body>
+</html>

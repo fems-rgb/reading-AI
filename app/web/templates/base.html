@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}绘本阅读陪伴 AI{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  {% block head %}{% endblock %}
+</head>
+<body class="{% block body_class %}{% endblock %}">
+{% block page %}
+<div class="wrap">
+  {% block content %}{% endblock %}
+</div>
+{% endblock %}
+<div id="toast" class="toast"></div>
+<script>
+  function toast(text) {
+    const el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add('show');
+    clearTimeout(window.__toastTimer);
+    window.__toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
+  }
+  async function api(path, options) {
+    const response = await fetch(path, Object.assign({headers: {'Content-Type': 'application/json'}}, options || {}));
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.detail || data.human_hint || '这一步没成功，再试一次好吗？');
+    }
+    return data;
+  }
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}绘本阅读陪伴 AI · 三端入口{% endblock %}
+{% block content %}
+<header class="site-head">
+  <div class="brand">
+    <div class="brand-mark">📖</div>
+    <div>
+      <h1>绘本阅读陪伴 AI 智能体</h1>
+      <p>完全离线 · 园区本地推理 · v{{ version }}</p>
+    </div>
+  </div>
+  <div class="row">
+    <span class="pill {{ 'ok' if offline_only else 'warn' }}">
+      {{ '离线模式' if offline_only else '未启用离线限制' }}
+    </span>
+    <span class="pill {{ 'warn' if demo_mode else 'ok' }}">
+      {{ '演示模式（确定性规则）' if demo_mode else '本地模型已接入' }}
+    </span>
+  </div>
+</header>
+
+{% if demo_mode %}
+<div class="demo-banner">
+  <strong>当前是演示模式：</strong>视觉 / 语言 / 语音中仍有环节使用确定性规则（{{ modes.values() | select('equalto', 'stub') | list | length }} 个）。
+  流程、自检、数据流全部真实；接入园内 GPU 服务后只需把 <span class="mono">*_MODE</span> 改成 <span class="mono">http</span>，无需改代码。
+</div>
+{% endif %}
+
+<section class="hero">
+  <h2>老师只需要会三件事：开机、拍照、听孩子说。</h2>
+  <p>翻页即被看见，回答被温柔接住。识别、提问、听懂、记录、自检全部在园内服务器完成，孩子的声音和照片不出园。</p>
+  <div class="pills">
+    <span class="pill">A11 AI 自检 · 每句话都过闸门</span>
+    <span class="pill">三层摘要 · 原文 / 忠实描述 / 可朗读讲稿</span>
+    <span class="pill">工作内存问完即删</span>
+  </div>
+</section>
+
+<div class="grid cols-3">
+  <a class="entry" href="/teacher">
+    <div class="icon">🧑‍🏫</div>
+    <h3>教师端</h3>
+    <p>今日三数、实时共读、绘本库与题库、教学建议审批、系统自检与运维。</p>
+    <span class="go">用口令进入 →</span>
+  </a>
+  <a class="entry" href="/robot">
+    <div class="icon">🤖</div>
+    <h3>机器人端</h3>
+    <p>一个大按钮：拍照 → 听问题 → 听孩子说 → 下一页。孩子不回答自动降为图标二选一。</p>
+    <span class="go">打开设备界面 →</span>
+  </a>
+  <a class="entry" href="{{ '/parent/' ~ parent_token if parent_token else '#' }}">
+    <div class="icon">💌</div>
+    <h3>家长周报</h3>
+    <p>一页读完的卡片：共读次数、孩子说过的话、老师一句话。不含排名、不含音视频。</p>
+    <span class="go">{{ '查看样例 →' if parent_token else '需先登记监护授权' }}</span>
+  </a>
+</div>
+
+<div class="card" style="margin-top:20px">
+  <div class="row" style="justify-content:space-between">
+    <h2>今天的数据</h2>
+    <span class="small muted">数据只在本机 SQLite 中</span>
+  </div>
+  <div class="statline" style="margin-top:14px">
+    <div class="stat"><b>{{ pages_today }}</b><span>今日共读页数</span></div>
+    <div class="stat"><b>{{ children }}</b><span>在册幼儿</span></div>
+    <div class="stat"><b>{{ books }}</b><span>绘本</span></div>
+    <div class="stat"><b>{{ avg_latency }} ms</b><span>单页平均耗时</span></div>
+  </div>
+</div>
+
+<div class="card" style="margin-top:16px">
+  <h2>模型接入状态</h2>
+  <p class="hint" style="margin-bottom:12px">全部指向园内地址，出站请求由 <span class="mono">app/guard.py</span> 强制拦截。</p>
+  <table class="table">
+    <tr><th>环节</th><th>方式</th><th>说明</th></tr>
+    <tr><td>A1 文字识别</td><td><span class="pill {{ 'warn' if modes.ocr == 'stub' else 'ok' }}">{{ modes.ocr }}</span></td><td class="small muted">PaddleOCR / 预识别缓存</td></tr>
+    <tr><td>A2 图像理解</td><td><span class="pill {{ 'warn' if modes.vlm == 'stub' else 'ok' }}">{{ modes.vlm }}</span></td><td class="small muted">Qwen3-VL 8B 4bit</td></tr>
+    <tr><td>A3/A4/A7/A10</td><td><span class="pill {{ 'warn' if modes.llm == 'stub' else 'ok' }}">{{ modes.llm }}</span></td><td class="small muted">本地 LLM（OpenAI 兼容）</td></tr>
+    <tr><td>A6 童声 ASR</td><td><span class="pill {{ 'warn' if modes.asr == 'stub' else 'ok' }}">{{ modes.asr }}</span></td><td class="small muted">FunASR / SenseVoice</td></tr>
+    <tr><td>TTS</td><td><span class="pill {{ 'warn' if modes.tts == 'stub' else 'ok' }}">{{ modes.tts }}</span></td><td class="small muted">本地语音合成</td></tr>
+  </table>
+</div>
+{% endblock %}

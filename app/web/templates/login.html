@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}教师端登录 · 绘本阅读陪伴 AI{% endblock %}
+{% block content %}
+<div class="login-card card">
+  <div class="brand" style="justify-content:center;margin-bottom:8px">
+    <div class="brand-mark">📖</div>
+  </div>
+  <h2>教师端</h2>
+  <p class="hint">输入口令即可进入，不需要账号密码。</p>
+  <div class="pin-display" id="pin-display">
+    <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
+  </div>
+  <div class="keypad" id="keypad">
+    <button data-key="1">1</button><button data-key="2">2</button><button data-key="3">3</button>
+    <button data-key="4">4</button><button data-key="5">5</button><button data-key="6">6</button>
+    <button data-key="7">7</button><button data-key="8">8</button><button data-key="9">9</button>
+    <button data-key="clear">清空</button><button data-key="0">0</button><button data-key="back">←</button>
+    <button class="wide" data-key="ok" style="background:var(--primary);color:#fff;border:none">进入</button>
+  </div>
+  <p class="small muted" style="margin-top:14px">口令在 <span class="mono">.env</span> 的 TEACHER_PIN / ADMIN_PIN 中配置。</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  let pin = '';
+  const dots = document.querySelectorAll('.pin-dot');
+
+  function paint() {
+    dots.forEach((dot, index) => dot.classList.toggle('on', index < pin.length));
+  }
+
+  async function submit() {
+    if (!pin) return;
+    try {
+      const data = await api('/api/login', {method: 'POST', body: JSON.stringify({pin})});
+      location.href = '/teacher';
+    } catch (error) {
+      toast(error.message);
+      pin = '';
+      paint();
+    }
+  }
+
+  document.getElementById('keypad').addEventListener('click', (event) => {
+    const key = event.target.dataset.key;
+    if (!key) return;
+    if (key === 'clear') pin = '';
+    else if (key === 'back') pin = pin.slice(0, -1);
+    else if (key === 'ok') { submit(); return; }
+    else if (pin.length < 8) pin += key;
+    paint();
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (/^[0-9]$/.test(event.key) && pin.length < 8) { pin += event.key; paint(); }
+    else if (event.key === 'Backspace') { pin = pin.slice(0, -1); paint(); }
+    else if (event.key === 'Enter') submit();
+  });
+</script>
+{% endblock %}

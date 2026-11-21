@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebSocket Echo 测试页</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: #f0f2f5;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .container {
+      width: 640px;
+      max-width: 92vw;
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+      overflow: hidden;
+    }
+    header {
+      padding: 16px 20px;
+      background: #1e293b;
+      color: #fff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    header h1 { font-size: 18px; }
+    #status { font-size: 13px; display: flex; align-items: center; gap: 6px; }
+    #status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #ef4444;
+      display: inline-block;
+    }
+    #status.connected #status-dot { background: #22c55e; }
+    #messages {
+      height: 380px;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: #fafafa;
+    }
+    .msg {
+      max-width: 75%;
+      padding: 8px 12px;
+      border-radius: 10px;
+      font-size: 14px;
+      line-height: 1.5;
+      word-break: break-all;
+      white-space: pre-wrap;
+    }
+    .msg.me { align-self: flex-end; background: #2563eb; color: #fff; border-bottom-right-radius: 2px; }
+    .msg.server { align-self: flex-start; background: #e2e8f0; color: #1e293b; border-bottom-left-radius: 2px; }
+    .msg.system { align-self: center; background: transparent; color: #94a3b8; font-size: 12px; }
+    .input-bar {
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px;
+      border-top: 1px solid #e5e7eb;
+    }
+    #message-input {
+      flex: 1;
+      padding: 10px 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+    }
+    #message-input:focus { border-color: #2563eb; }
+    button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 8px;
+      background: #2563eb;
+      color: #fff;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button:hover { background: #1d4ed8; }
+    button:disabled { background: #94a3b8; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>WebSocket Echo 测试页</h1>
+      <div id="status"><span id="status-dot"></span><span id="status-text">连接中…</span></div>
+    </header>
+    <div id="messages"></div>
+    <div class="input-bar">
+      <input id="message-input" type="text" placeholder="输入消息，回车或点击发送" autocomplete="off">
+      <button id="send-btn" onclick="sendMessage()">发送</button>
+    </div>
+  </div>
+
+  <script>
+    // 连接地址：与本页面同源的 WebSocket 回显端点
+    const WS_URL = "ws://127.0.0.1:8000/ws/echo";
+    const messagesEl = document.getElementById("messages");
+    const inputEl = document.getElementById("message-input");
+    const sendBtn = document.getElementById("send-btn");
+    const statusEl = document.getElementById("status");
+    const statusTextEl = document.getElementById("status-text");
+
+    let ws = null;
+
+    function setStatus(connected, text) {
+      statusEl.classList.toggle("connected", connected);
+      statusTextEl.textContent = text;
+      sendBtn.disabled = !connected;
+    }
+
+    function appendMessage(type, text) {
+      const div = document.createElement("div");
+      div.className = "msg " + type;
+      div.textContent = text;
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function connect() {
+      ws = new WebSocket(WS_URL);
+      ws.onopen = () => {
+        setStatus(true, "已连接 " + WS_URL);
+        appendMessage("system", "连接成功，发送任意文本将原样返回");
+      };
+      ws.onmessage = (event) => appendMessage("server", event.data);
+      ws.onclose = () => {
+        setStatus(false, "已断开，3 秒后自动重连…");
+        setTimeout(connect, 3000);
+      };
+    }
+
+    function sendMessage() {
+      const text = inputEl.value.trim();
+      if (!text) return;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        appendMessage("system", "未连接，无法发送");
+        return;
+      }
+      ws.send(text);
+      appendMessage("me", text);
+      inputEl.value = "";
+      inputEl.focus();
+    }
+
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") sendMessage();
+    });
+
+    connect();
+  </script>
+</body>
+</html>
