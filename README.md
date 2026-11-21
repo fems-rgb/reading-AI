@@ -66,6 +66,7 @@ python run.py
 https 页面还不能直连局域网 http。所以预览用 `<img>` 直连（失败时自动改由服务端转发），
 抓帧走 `GET /api/camera/snapshot?session_id&token&url`：服务端校验设备凭证后只允许
 **http + 解析结果全部落在局域网/环回**的地址，不跟随重定向、只认图片、单帧 ≤ 8MB，
+校验通过的 IP 会直接钉进实际请求（Host 头保留原名，防 DNS 重绑定），
 既不当 SSRF 跳板，也不把任何帧落盘。单帧地址（`/capture`、`/shot.jpg`）直接取；
 只给 MJPEG 流的摄像头会从流里抠出第一张完整 JPEG 就断开，不让服务端一直挂着。
 要网页登录的摄像头把账号密码写进地址（`http://账号:密码@<摄像头-ip>/...`）：Basic 直接带上，
@@ -157,7 +158,7 @@ https 页面还不能直连局域网 http。所以预览用 `<img>` 直连（失
 | 提问交给语音模型"临场发挥"，可能问到画面里没有的东西 | OCR 与 VLM 分工，A3 只重组事实，A4 单独提问，A11 用词表校验接地 |
 | 没有独立 OCR，全靠多模态模型猜字 | A1 用 PaddleOCR；库内页面直接命中预识别缓存 |
 | 没有数据库，重启丢记录 | SQLite（WAL）+ 短连接，记录进 `sessions/turns/advice/weekly_reports/selfchecks/metrics/audit_log` |
-| 没有测试、没有日志埋点、没有降级 | `tests/` 62 条用例；`metrics` 表记录每阶段耗时与 token；任一模型不可用自动降级为规则版，界面标「演示模式」 |
+| 没有测试、没有日志埋点、没有降级 | `tests/` 63 条用例；`metrics` 表记录每阶段耗时与 token；任一模型不可用自动降级为规则版，界面标「演示模式」 |
 | 没有题库、没有绘本库 | 教师端可建绘本、上传页面（本地预识别 → 待校对 → 可用）、维护题库；题库题目同样过自检 |
 | 没有家长侧、没有授权与删除 | 一次性家长 token、只读已发布周报、可撤回授权并删周报；管理员可"删除全部记录"（一次性连带会话/问答/建议/周报） |
 
@@ -216,7 +217,7 @@ run.py               启动器
 ## 8. 开发与验证
 
 ```bash
-python -m pytest tests -q                 # 62 条：内容闸门 / 接口全链路 / 网络摄像头代理（含 MJPEG、Basic/Digest 登录）/ WebSocket / 离线守卫 / 播放缓存清理 / 语音回答
+python -m pytest tests -q                 # 63 条：内容闸门 / 接口全链路 / 网络摄像头代理（含 MJPEG、Basic/Digest 登录、IP 钉死）/ WebSocket / 离线守卫 / 播放缓存清理 / 语音回答
 python _tools\check_imports.py            # 逐模块 import，抓循环导入与语法错误
 python _tools\live_smoke.py               # 对已启动服务跑一遍真实链路（含闸门演示输出）
 ```

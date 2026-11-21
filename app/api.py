@@ -621,12 +621,15 @@ def _device_session(session_id: str, token: str) -> dict:
 CAMERA_MAX_BYTES = 8 * 1024 * 1024
 
 
-def _camera_url_allowed(url: str) -> tuple[bool, str]:
-    """只允许局域网里的 http 图片地址。
+def _camera_url_allowed(url: str) -> tuple[bool, str, str]:
+    """只允许局域网里的 http 图片地址，并返回校验通过的那个 IP。
 
     设备端会把用户填的地址交给服务端去拉，这等于一次 SSRF 机会：
     必须锁死为「http + 解析后全部落在私有/环回地址」，否则这台完全离线的机器
     可能被当成跳板去访问外网。域名解析到公网同样拒绝，重定向一律不跟随。
+
+    返回的 IP 会被钉进实际请求（Host 头保留原名）：校验一次解析、连接又一次解析的话，
+    控制 DNS 的人可以在两次之间把域名重绑到公网，钉死就堵住了这个时间差。
     """
     parsed = urlparse(url.strip())
     if parsed.scheme in {"rtsp", "rtsps"}:
@@ -634,27 +637,40 @@ def _camera_url_allowed(url: str) -> tuple[bool, str]:
             "RTSP 流要先转换：在电脑上运行 _tools/camera_bridge.py --url "
             + url.strip()
             + "，把它显示的 http 地址填到这里"
-        )
+        ), ""
     if parsed.scheme != "http":
-        return False, "只支持 http 地址（局域网摄像头一般不配 https 证书）"
+        return False, "只支持 http 地址（局域网摄像头一般不配 https 证书）", ""
     if not parsed.hostname:
-        return False, "地址里没有主机名"
+        return False, "地址里没有主机名", ""
     try:
         port = parsed.port or 80
     except ValueError:
-        return False, "端口写错了"
+        return False, "端口写错了", ""
     try:
         infos = socket.getaddrinfo(parsed.hostname, port, proto=socket.IPPROTO_TCP)
     except OSError:
-        return False, "解析不了这个地址，检查摄像头是否在线、IP 是否写对"
+        return False, "解析不了这个地址，检查摄像头是否在线、IP 是否写对", ""
+    private: list[str] = []
     for info in infos:
         try:
             ip = ipaddress.ip_address(info[4][0])
         except ValueError:
-            return False, "地址格式不对"
+            return False, "地址格式不对", ""
         if not (ip.is_private or ip.is_loopback):
-            return False, "只允许局域网地址（192.168/10/172.16-31），不能指向外网"
-    return True, ""
+            return False, "只允许局域网地址（192.168/10/172.16-31），不能指向外网", ""
+        private.append(info[4][0])
+    # IPv4 优先：有些摄像头只监听 v4，localhost 会同时解析出 ::1 和 127.0.0.1
+    private.sort(key=lambda value: ":" in value)
+    return True, "", private[0]
+
+
+def _pin_camera_target(url: str, ip: str) -> tuple[str, dict[str, str]]:
+    """把 host 换成校验过的 IP，Host 头保留原名（摄像头/虚拟主机按名字区分）。"""
+    parsed = urlparse(url)
+    host = f"[{ip}]" if ":" in ip else ip
+    if parsed.port:
+        host = f"{host}:{parsed.port}"
+    return parsed._replace(netloc=host).geturl(), {"Host": parsed.netloc.split("@")[-1]}
 
 
 def _slice_jpeg(buffer: bytearray) -> bytes | None:
@@ -685,9 +701,14 @@ class _CameraAuthError(Exception):
         super().__init__(challenge)
 
 
-async def _grab_frame(client: httpx.AsyncClient, url: str, auth: httpx.Auth | None = None) -> bytes:
+async def _grab_frame(
+    client: httpx.AsyncClient,
+    url: str,
+    auth: httpx.Auth | None = None,
+    headers: dict[str, str] | None = None,
+) -> bytes:
     """拉一帧：单帧图片原样返回，MJPEG 流（multipart/x-mixed-replace）抠出第一张完整 JPEG 就断开。"""
-    async with client.stream("GET", url, auth=auth) as response:
+    async with client.stream("GET", url, auth=auth, headers=headers) as response:
         if response.status_code == 401:
             raise _CameraAuthError(response.headers.get("www-authenticate") or "")
         if response.status_code != 200:
@@ -739,10 +760,11 @@ async def camera_snapshot(request: Request, session_id: str = "", token: str = "
     except HTTPException:
         if auth.role_of(request) not in {"teacher", "admin"}:
             raise
-    ok, reason = await asyncio.to_thread(_camera_url_allowed, url)
+    user, password, clean_url = _url_credentials(url)
+    ok, reason, ip = await asyncio.to_thread(_camera_url_allowed, clean_url)
     if not ok:
         raise HTTPException(status_code=400, detail=reason)
-    user, password, clean_url = _url_credentials(url)
+    pinned_url, pin_headers = _pin_camera_target(clean_url, ip)
     try:
         timeout = httpx.Timeout(4.0, read=4.0)
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
@@ -750,8 +772,9 @@ async def camera_snapshot(request: Request, session_id: str = "", token: str = "
                 # 地址里带账号密码时先试 Basic，海康/大华这类要 Digest 的再换 Digest 重算
                 body = await _grab_frame(
                     client,
-                    clean_url if user else url,
+                    pinned_url,
                     auth=httpx.BasicAuth(user, password) if user else None,
+                    headers=pin_headers,
                 )
             except _CameraAuthError as challenge:
                 if not user or "digest" not in challenge.challenge.lower():
@@ -761,7 +784,7 @@ async def camera_snapshot(request: Request, session_id: str = "", token: str = "
                         else "摄像头的账号或密码不对，检查地址里的账号密码"
                     )
                     raise HTTPException(status_code=401, detail=detail) from challenge
-                body = await _grab_frame(client, clean_url, auth=httpx.DigestAuth(user, password))
+                body = await _grab_frame(client, pinned_url, auth=httpx.DigestAuth(user, password), headers=pin_headers)
     except _CameraAuthError as challenge:
         raise HTTPException(status_code=401, detail="摄像头的账号或密码不对，检查地址里的账号密码") from challenge
     except httpx.HTTPError as exc:

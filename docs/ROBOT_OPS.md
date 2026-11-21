@@ -132,7 +132,8 @@ WantedBy=multi-user.target
   设一次 `src` 就一直播。浏览器所在网段连不到摄像头时，自动改由服务端转发预览。
 - **抓帧**：浏览器读不到跨域像素（canvas 会被污染），所以抓帧走
   `/api/camera/snapshot?session_id&token&url`，由服务端代抓。服务端只允许 **http + 解析后全部是
-  局域网/环回 IP** 的地址，不跟随重定向、只收图片、单帧 ≤ 8MB——不会变成访问外网的跳板。
+  局域网/环回 IP** 的地址，不跟随重定向、只收图片、单帧 ≤ 8MB，校验过的 IP 直接钉进请求
+  （Host 头保留原名），防 DNS 重绑定——不会变成访问外网的跳板。
   单帧地址（`/capture`、`/shot.jpg`）直接取；只给 MJPEG 流的摄像头会从流里抠出第一张完整的 JPEG 就断开，
   不让服务端一直挂着。
 - **自动翻页**：网络上按 1.5 秒一帧的节奏采样（ESP32 扛不住高频），翻页后自动拍、1.5 秒后自动提交。
@@ -224,7 +225,7 @@ WantedBy=multi-user.target
 ## 7. 验收清单（每次上架/换机跑一遍）
 
 ```bash
-python -m pytest tests -q            # 应为 62 passed
+python -m pytest tests -q            # 应为 63 passed
 python _tools\check_imports.py       # 无报错
 python run.py                        # 另开一个终端
 python _tools\live_smoke.py          # 结尾打印"链路自检全部通过"

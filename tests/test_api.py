@@ -23,8 +23,10 @@ class _CameraHandler(http.server.BaseHTTPRequestHandler):
 
     REALM = "esp32cam"
     NONCE = "abc123"
+    last_host = ""
 
     def do_GET(self):  # noqa: N802
+        type(self).last_host = self.headers.get("Host") or ""
         if self.path.startswith("/capture"):
             body, content_type = page_jpeg(), "image/jpeg"
             self._send(200, body, content_type)
@@ -247,6 +249,16 @@ def test_camera_snapshot_supports_digest_login(teacher, fake_camera):
     ok = teacher.get("/api/camera/snapshot", params={**params, "url": f"http://cam:secret@{host}/digest"})
     assert ok.status_code == 200, ok.text
     assert ok.content[:2] == b"\xff\xd8"
+
+
+def test_camera_snapshot_pins_checked_ip(teacher, fake_camera):
+    """防 DNS 重绑定：校验通过的 IP 要钉进实际请求，Host 头保留原名。"""
+    port = fake_camera.rsplit(":", 1)[1]
+    started = _session(teacher)
+    params = {"session_id": started["session_id"], "token": started["token"]}
+    ok = teacher.get("/api/camera/snapshot", params={**params, "url": f"http://localhost:{port}/capture"})
+    assert ok.status_code == 200, ok.text
+    assert _CameraHandler.last_host == f"localhost:{port}", "请求应打到校验过的 IP，但 Host 头要保留原域名"
 
 
 def test_full_reading_flow(teacher):
