@@ -258,6 +258,17 @@ class SessionRuntime:
             turn = db.q1("SELECT * FROM turns WHERE id=?", (result["turn_id"],))
             self.last_turn = turn
 
+            # 先把这一页讲给孩子听：讲稿已过内容闸门，合成失败也不挡提问
+            script = str((result.get("display") or {}).get("script") or "").strip()
+            read_audio: dict = {}
+            if script:
+                try:
+                    read_audio = self._remember_audio(
+                        await asyncio.to_thread(speech.synthesize, script, "")
+                    )
+                except Exception:  # noqa: BLE001 讲稿只是锦上添花
+                    read_audio = {}
+
             self._emit(
                 "page",
                 {
@@ -269,17 +280,19 @@ class SessionRuntime:
                     "latency_ms": result["latency_ms"],
                     "thumbnail": self.last_thumb,
                     "question": result["question"],
+                    "read": {"text": script, "audio": read_audio},
                 },
             )
             db.update_session(self.session["id"], last_page_no=page_no)
 
-            # 留出看画面的时间，再开口提问；连续翻页会取消旧任务
+            # 留出看画面 + 听讲稿的时间，再开口提问；连续翻页会取消旧任务
             self.state = "QUESTIONING"
             self._emit("state", {"page_no": page_no})
-            self._spawn(lambda: self._ask_after_delay(result["question"]))
+            read_seconds = float(read_audio.get("duration") or 0)
+            self._spawn(lambda: self._ask_after_delay(result["question"], read_seconds))
             return result
 
-    async def _ask_after_delay(self, question: dict) -> None:
+    async def _ask_after_delay(self, question: dict, read_seconds: float = 0.0) -> None:
         if self._closed or self.paused:
             return
         # TTS 与“留出看画面的时间”并行：合成耗时不能加在孩子等待上
@@ -287,7 +300,9 @@ class SessionRuntime:
             asyncio.to_thread(speech.synthesize, question["question"], "")
         )
         try:
-            await asyncio.sleep(get_settings().question_delay_seconds)
+            # 讲稿有多长，就等它讲完再提问（至少保留原来的看画面时间）
+            wait_seconds = max(get_settings().question_delay_seconds, read_seconds + 1.2)
+            await asyncio.sleep(wait_seconds)
             if self._closed or self.paused:
                 return
             audio = self._remember_audio(await audio_task)

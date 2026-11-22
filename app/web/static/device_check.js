@@ -330,4 +330,56 @@ $('copy').addEventListener('click', () => {
   }
 });
 
+// ---------------- 共读引擎（服务端深度自检） ----------------
+
+function escapeText(text) {
+  return String(text == null ? '' : text).replace(/[&<>"']/g, (ch) => (
+    {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[ch]
+  ));
+}
+
+async function loadEngineModes() {
+  try {
+    const reply = await fetch('/healthz');
+    const data = await reply.json();
+    const modes = Object.entries(data.modes || {}).map(([name, mode]) => `${name.toUpperCase()} ${mode}`).join(' · ');
+    $('engine-modes').textContent = `服务启动 ${data.started_at || '?'} · ${modes || '没读到模式'}`;
+  } catch (error) {
+    $('engine-modes').textContent = '服务端没响应：先确认后端已启动';
+  }
+}
+
+async function runEngineCheck() {
+  const box = $('engine-result');
+  box.innerHTML = '<p class="small muted">正在真跑五个引擎：OCR → VLM → LLM → TTS → ASR，约 20-40 秒…</p>';
+  try {
+    const reply = await fetch('/api/teacher/selfcheck/deep', {method: 'POST'});
+    if (reply.status === 401 || reply.status === 403) {
+      box.innerHTML = '<p class="small muted" style="color:#b4552d">需要教师权限：先点上面的「登录教师端」，登录后再回来跑。</p>';
+      return;
+    }
+    const data = await reply.json();
+    if (!reply.ok) throw new Error(data.detail || '服务端拒绝了这次自检');
+    if (data.verdict === 'busy') {
+      box.innerHTML = `<p class="small muted">${escapeText(data.summary || '上一次还在跑')}</p>`;
+      return;
+    }
+    const rows = (data.checks || []).map((item) => `
+      <tr>
+        <td>${item.status === 'ok' ? '✅' : item.status === 'warn' ? '⚠️' : '❌'}</td>
+        <td>${escapeText(item.name)}</td>
+        <td class="small muted">${escapeText(item.detail || '')}</td>
+        <td class="mono">${item.ms || 0} ms</td>
+      </tr>`).join('');
+    const seconds = data.total_ms ? `${(data.total_ms / 1000).toFixed(1)} 秒` : '';
+    box.innerHTML = `<p class="small"><strong>${escapeText(data.summary || '')}</strong>${seconds ? ` · ${seconds}` : ''}</p>
+      <table class="table"><tr><th>结论</th><th>引擎</th><th>实测</th><th>耗时</th></tr>${rows}</table>`;
+  } catch (error) {
+    box.innerHTML = `<p class="small muted">没跑起来：${escapeText(error.message || '')}</p>`;
+  }
+}
+
+$('engine-run').addEventListener('click', runEngineCheck);
+loadEngineModes();
+
 renderCaps();

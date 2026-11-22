@@ -329,13 +329,20 @@ def test_device_websocket_streams_events(teacher):
         assert hello["type"] == "snapshot"
         ws.send_json({"type": "capture", "page_no": 1, "image": image})
         events = []
+        page_data = None
         for _ in range(8):
             message = ws.receive_json()
             if message.get("event"):
                 events.append(message["event"])
-            if "page" in events:
-                break
+                if message["event"] == "page":
+                    page_data = message.get("data") or {}
+                    break
         assert "page" in events, events
+        # 拍完这一页，机器人要先把讲稿讲出来，而不是只显示文字
+        read = (page_data or {}).get("read") or {}
+        assert read.get("text"), "page 事件要带讲稿文本"
+        assert (read.get("audio") or {}).get("url"), "讲稿要合成音频随事件下发"
+        assert read["text"] == ((page_data or {}).get("display") or {}).get("script")
     client.post(f"/api/teacher/sessions/{session_id}/end", json={})
 
 

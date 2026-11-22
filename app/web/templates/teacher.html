@@ -207,6 +207,16 @@
     </div>
     <div class="card">
       <div class="row" style="justify-content:space-between">
+        <div><h2>深度自检</h2><p class="hint">不是查“装没装”：现场生成测试卡片跑 OCR/VLM，合成一句语音再转写回来。约 20-40 秒。</p></div>
+        <button class="btn small" onclick="runDeepCheck()">真跑一遍</button>
+      </div>
+      <div id="deep-check" style="margin-top:12px" class="list"></div>
+    </div>
+  </div>
+
+  <div class="grid cols-2" style="margin-top:16px;align-items:start">
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
         <div><h2>内容闸门试跑</h2><p class="hint">用几条“坏例子”看闸门真会拦：画外实体、抽象词、超长、重复、排名。纯规则，不调模型。</p></div>
         <button class="btn ghost small" onclick="runDemo()">跑一遍</button>
       </div>

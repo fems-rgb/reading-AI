@@ -277,6 +277,23 @@ def main() -> int:
         report["captured_hint"] = robot.inner_text("#src-hint")
 
         robot.click("#src-confirm")  # 用这张
+        # 讲稿先于提问：拍完后应先把这一页讲出来（文字上屏 + 音频可取）
+        robot.wait_for_function(
+            "(() => { const s = document.getElementById('story'); return s && !s.hidden && s.textContent.trim().length > 0; })()",
+            timeout=60000,
+        )
+        robot.wait_for_timeout(300)
+        path = SHOTS / "12_story.png"
+        robot.screenshot(path=str(path))
+        report["shots"].append(str(path))
+        report["story"] = robot.inner_text("#story").replace("\n", " ")[:160]
+        audio_src = robot.evaluate(
+            "(() => { try { return (currentAudio && currentAudio.src) || ''; } catch (e) { return ''; } })()"
+        )
+        report["story_audio"] = audio_src
+        if audio_src:
+            media = context.request.get(audio_src)
+            report["story_audio_ok"] = bool(media.ok and len(media.body()) > 2048)
         robot.wait_for_function(
             "(() => { const s = document.getElementById('stage'); return !!(s.querySelector('.question') || s.querySelector('.hint')); })()",
             timeout=60000,

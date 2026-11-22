@@ -57,14 +57,17 @@ scripts\install.ps1 -NoLan -NoAutoStart
 scripts\run_server.bat
 ```
 
-打开 <http://127.0.0.1:8000/device_check>，点「运行自检」，应看到：
+打开 <http://127.0.0.1:8000/device-check>：先看浏览器能力、摄像头、麦克风、喇叭、网络；
+再在「共读引擎（服务端）」块点「真跑五个引擎」（需先在教师端登录），应看到五项全 ✅：
 
-- A1 OCR（RapidOCR 本机引擎）ok
-- A2 VLM（qwen2.5vl:3b）ok
-- A3/A4/A7/A10 LLM（qwen2.5:3b）ok
-- A5 TTS（SAPI 中文女声）ok
-- A6 ASR（faster-whisper small）ok
-- 无园外请求配置 ok
+- OCR 识字：认出「绘本共读」
+- VLM 看画面：看到画面里的物体
+- LLM 生成：回答「好」
+- TTS 出声：sapi5，生成了音频
+- ASR 转写：把刚合成的音频转回文字，相似度高
+
+两项补强：教师端 →「运维」→「运行自检」看依赖/端口/离线/绘本库；
+「深度自检」则是真调模型跑完上面五条链路（约 20 秒，每项带实测耗时）。
 
 只要有一项 `warn/stub`，首页会显示“演示模式”，说明该环节还没接上真实引擎。
 

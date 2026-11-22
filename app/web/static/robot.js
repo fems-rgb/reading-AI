@@ -69,12 +69,31 @@ function escapeHtml(text) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
-function playAudio(url) {
+let currentAudio = null;  // 同一时刻只播一句：讲稿和提问不能叠在一起
+
+function playAudio(url, fallbackHint) {
   if (!url) return;
+  if (currentAudio) {
+    try { currentAudio.pause(); } catch (error) { /* 已播完 */ }
+  }
   const audio = new Audio(url);
+  currentAudio = audio;
   audio.play().catch(() => {
-    toast('点一下【再听一遍】就能听到提问');
+    toast(fallbackHint || '点一下【再听一遍】就能听到提问');
   });
+}
+
+function stopAudio() {
+  if (!currentAudio) return;
+  try { currentAudio.pause(); } catch (error) { /* 已播完 */ }
+  currentAudio = null;
+}
+
+function showStory(text) {
+  const box = document.getElementById('story');
+  if (!box) return;
+  box.textContent = text || '';
+  box.hidden = !text;
 }
 
 // ---------------- 渲染 ----------------
@@ -394,6 +413,9 @@ function handleEvent(name, data) {
   }
   if (name === 'page') {
     renderPicture(data);
+    const read = data.read || {};
+    showStory(read.text || '');
+    playAudio((read.audio || {}).url, '点一下【再听一遍】听我讲这一页');
     phase = 'busy';
     setMain('快好了…', false);
     startAnalyzeWatch();
@@ -425,6 +447,7 @@ function handleEvent(name, data) {
     clearAnalyzeWatch();
     phase = 'idle';
     setState('准备中', false);
+    showStory('');
     stage.innerHTML = `<div class="placeholder">${escapeHtml(data.human_hint || '再拍一次好吗？')}</div>`;
     setMain(`重拍第 ${nextPage} 页`, true);
     toast(data.human_hint || '再拍一次好吗？');
@@ -443,6 +466,8 @@ function handleEvent(name, data) {
   }
   if (name === 'skipped') {
     clearAnalyzeWatch();
+    showStory('');
+    stopAudio();
     phase = 'answered';
     nextPage = (data.page_no || nextPage - 1) + 1;
     setMain(`拍第 ${nextPage} 页`, true);
@@ -451,6 +476,8 @@ function handleEvent(name, data) {
   }
   if (name === 'teacher_talk') {
     phase = 'idle';
+    showStory('');
+    stopAudio();
     setState('老师来讲', false);
     setMain('我安静听', false);
     toast(data.human_hint || '老师来提问啦');
@@ -461,6 +488,8 @@ function handleEvent(name, data) {
     stopHeartbeat();
     clearTimeout(pollTimer);
     clearAnalyzeWatch();
+    showStory('');
+    stopAudio();
     phase = 'ended';
     setState('共读结束', false);
     stage.innerHTML = `

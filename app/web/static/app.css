@@ -221,6 +221,12 @@ textarea { resize: vertical; min-height: 90px; line-height: 1.6; }
   align-items: center; text-align: center; min-height: 300px; justify-content: center;
 }
 .stage .pic { max-width: 100%; max-height: 320px; border-radius: 18px; }
+.story {
+  width: min(760px, 96vw); margin-top: 12px; padding: 12px 18px; border-radius: 16px;
+  background: #fffdf5; border: 1px solid #e6d9bd; color: #3a3226;
+  font-size: 22px; line-height: 1.55; text-align: left;
+}
+.story[hidden] { display: none; }
 .stage .placeholder {
   width: 100%; min-height: 220px; border-radius: 18px; display: grid; place-items: center;
   background: repeating-linear-gradient(45deg, #f4f9f6, #f4f9f6 12px, #eef6f1 12px, #eef6f1 24px);

@@ -621,6 +621,40 @@ async function runSystemCheck(renderTable) {
   }
 }
 
+async function runDeepCheck() {
+  const box = document.getElementById('deep-check');
+  box.innerHTML = '<p class="small muted">正在真跑五个引擎：OCR → VLM → LLM → TTS → ASR，约 20-40 秒，先别关页面…</p>';
+  try {
+    const data = await api('/api/teacher/selfcheck/deep', {method: 'POST'});
+    if (data.verdict === 'busy') {
+      box.innerHTML = `<p class="small muted">${escapeHtml(data.summary || '上一次还在跑')}</p>`;
+      return;
+    }
+    const seconds = data.total_ms ? `共 ${(data.total_ms / 1000).toFixed(1)} 秒 · ` : '';
+    box.innerHTML = `
+      <div class="row" style="margin-bottom:8px">${pill(data.verdict === 'pass' ? 'ok' : 'fail', data.verdict === 'pass' ? '全部跑通' : '没跑通')}
+        <span class="small muted">${seconds}${escapeHtml(data.checked_at || '')}</span></div>
+      <p class="small muted">${escapeHtml(data.summary || '')}</p>${deepTable(data.checks)}`;
+    if (data.verdict !== 'pass') toast(data.summary || '深度自检没通过');
+  } catch (error) {
+    box.innerHTML = `<p class="small muted">没跑起来：${escapeHtml(error.message || '')}</p>`;
+    toast(error.message);
+  }
+}
+
+function deepTable(checks) {
+  if (!checks || !checks.length) return '<p class="small muted">没有检查项</p>';
+  const rows = checks.map((check) => `
+    <tr>
+      <td>${pill(check.status === 'fail' ? 'fail' : check.status === 'warn' ? 'warn' : 'ok', check.status)}</td>
+      <td>${escapeHtml(check.name)}</td>
+      <td>${escapeHtml(check.detail || '')}</td>
+      <td class="mono">${check.ms || 0} ms</td>
+      <td>${escapeHtml(check.fix || '')}</td>
+    </tr>`).join('');
+  return `<table><tr><th>结论</th><th>引擎</th><th>实测</th><th>耗时</th><th>处理</th></tr>${rows}</table>`;
+}
+
 async function runDemo() {
   try {
     const data = await api('/api/teacher/selfcheck/demo');

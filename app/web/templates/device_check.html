@@ -59,6 +59,17 @@
   </section>
 
   <section class="stage check-card">
+    <h3>共读引擎（服务端）</h3>
+    <p class="small muted" id="engine-modes">正在读取服务端模式…</p>
+    <div class="robot-side check-row">
+      <button class="btn" id="engine-run">真跑五个引擎</button>
+      <a class="btn ghost" href="/teacher" target="_blank" rel="noopener">登录教师端</a>
+    </div>
+    <div id="engine-result" style="margin-top:12px"></div>
+    <p class="small muted">不是查“装没装”：现场生成测试卡片跑 OCR/VLM，合成一句语音再转写回来，约 20-40 秒。需先登录教师端。</p>
+  </section>
+
+  <section class="stage check-card">
     <h3>网络</h3>
     <p class="small muted" id="net-note">还没测。局域网抖动大时，机器人端会自动切兼容模式。</p>
     <div class="robot-side check-row">

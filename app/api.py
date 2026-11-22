@@ -30,6 +30,7 @@ from .core.orchestrator import STATE_LABELS, SessionRuntime, bus, list_active_se
 from .core.pipeline import analyze_page, build_weekly_report
 from .services import selfcheck
 from .services import camera as local_camera
+from .services import deepcheck
 from .services.metrics import today_summary
 from .services.vision import OcrService, VlmService
 from .utils import age_label, now, today_start, truncate
@@ -471,6 +472,12 @@ async def publish_report(report_id: int, role: str = Depends(auth.require_teache
 @api.get("/teacher/selfcheck/system")
 async def selfcheck_system(role: str = Depends(auth.require_teacher)) -> dict:
     return selfcheck.run_system_check()
+
+
+@api.post("/teacher/selfcheck/deep")
+async def selfcheck_deep(role: str = Depends(auth.require_teacher)) -> dict:
+    """真跑五个引擎（约 20~40 秒）：测试卡片走 OCR/VLM，合成一句话再转写回来。"""
+    return await asyncio.to_thread(deepcheck.run_deep_check)
 
 
 @api.get("/teacher/selfcheck/history")

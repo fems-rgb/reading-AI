@@ -365,6 +365,15 @@ def step_browser() -> None:
             ok(f"断言 {key}", text.replace("\n", " ")[:40])
         else:
             bad(f"断言 {key}", f"期望包含“{needle}”，实际 {text[:60]!r}")
+    story = str(report.get("story") or "")
+    if len(story) >= 4:
+        ok("讲稿先讲出来", story[:40])
+    else:
+        bad("讲稿先讲出来", f"story 区没内容：{story!r}")
+    if report.get("story_audio_ok"):
+        ok("讲稿音频可取", str(report.get("story_audio"))[-40:])
+    else:
+        bad("讲稿音频可取", str(report.get("story_audio"))[:80])
     ended = report.get("ended") or []
     if ended == [True, True, True, True]:
         ok("四个会话均正常结束", str(ended))
@@ -636,6 +645,54 @@ def step_repo() -> None:
         ok("敏感文件未入库", f"{len(tracked)} 个跟踪文件，无 data/、.env、截图")
 
 
+# ---------------------------------------------------------------- 深度自检
+def step_deep() -> None:
+    """不采信“装没装”：让服务端现场跑五个引擎，看它真出结果。"""
+    client = httpx.Client(base_url=BASE, timeout=180)
+    try:
+        login = client.post("/api/login", json={"pin": PIN})
+    except httpx.HTTPError:
+        client.close()
+        note("服务没起，跳过深度自检")
+        return
+    if login.status_code != 200:
+        client.close()
+        note("口令不对，跳过深度自检")
+        return
+    try:
+        page = client.get("/device-check")
+        if page.status_code == 200 and "真跑五个引擎" in page.text:
+            ok("自检页入口", "device-check 有“真跑五个引擎”卡片")
+        else:
+            bad("自检页入口", f"{page.status_code}，页面里没有深度自检卡片")
+        started = time.monotonic()
+        reply = client.post("/api/teacher/selfcheck/deep")
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+        if reply.status_code != 200:
+            bad("深度自检接口", f"{reply.status_code} {reply.text[:120]}")
+            return
+        data = reply.json()
+        checks = data.get("checks") or []
+        if data.get("verdict") != "pass":
+            failed = [f"{c.get('name')}：{c.get('detail')}" for c in checks if c.get("status") == "fail"]
+            bad("深度自检结论", data.get("summary") or "；".join(failed))
+            return
+        if len(checks) != 5:
+            bad("深度自检项数", f"只有 {len(checks)} 项，应该是 5 个引擎")
+            return
+        total_ms = int(data.get("total_ms") or elapsed_ms)
+        if total_ms < 1500:
+            bad("深度自检像走过场", f"五项只用了 {total_ms} ms，不像真调模型")
+            return
+        summary = "；".join(f"{c['name']} {c.get('ms', 0)}ms" for c in checks)
+        ok("深度自检", f"{len(checks)} 项全过，共 {total_ms} ms：{summary}")
+        warns = [c for c in checks if c.get("status") == "warn"]
+        if warns:
+            note("有提示项：" + "；".join(f"{c['name']}：{c.get('detail')}" for c in warns))
+    finally:
+        client.close()
+
+
 STEPS = {
     "pytest": step_pytest,
     "imports": step_imports,
@@ -645,6 +702,7 @@ STEPS = {
     "browser": step_browser,
     "defense": step_defense,
     "offline": step_offline,
+    "deep": step_deep,
     "repo": step_repo,
 }
 
