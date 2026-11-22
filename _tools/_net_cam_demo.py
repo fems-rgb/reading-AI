@@ -317,6 +317,9 @@ def main() -> int:
         robot.screenshot(path=str(path))
         report["shots"].append(str(path))
         report["free_answer"] = robot.inner_text("#stage").replace("\n", " / ")[:200]
+        report["free_answer_text"] = robot.evaluate(
+            "(() => { const e = document.querySelector('#stage .question'); return e ? e.textContent.trim() : ''; })()"
+        )
         free_audio = robot.evaluate(
             "(() => { try { return (currentAudio && currentAudio.src) || ''; } catch (e) { return ''; } })()"
         )
@@ -324,6 +327,51 @@ def main() -> int:
         if free_audio:
             media = context.request.get(free_audio)
             report["free_audio_ok"] = bool(media.ok and len(media.body()) > 2048)
+
+        # ---- 追问第二轮：上一轮问答要带进上下文，不能答非所问 ----
+        robot.click("#free-btn")
+        robot.fill("#answer-input", "它手里拿的是什么呀？")
+        robot.click("#answer-send")
+        robot.wait_for_function(
+            "(() => document.getElementById('stage').textContent.includes('它手里拿的是什么呀'))()",
+            timeout=90000,
+        )
+        robot.wait_for_timeout(400)
+        path = SHOTS / "19_free_followup.png"
+        robot.screenshot(path=str(path))
+        report["shots"].append(str(path))
+        report["free_followup"] = robot.inner_text("#stage").replace("\n", " / ")[:200]
+        report["free_followup_answer"] = robot.evaluate(
+            "(() => { const e = document.querySelector('#stage .question'); return e ? e.textContent.trim() : ''; })()"
+        )
+        follow_audio = robot.evaluate(
+            "(() => { try { return (currentAudio && currentAudio.src) || ''; } catch (e) { return ''; } })()"
+        )
+        report["free_followup_audio"] = follow_audio
+        if follow_audio:
+            media = context.request.get(follow_audio)
+            report["free_followup_audio_ok"] = bool(media.ok and len(media.body()) > 2048)
+
+        # ---- 护眼开关：支持就开，不支持必须说实话，不能假装成功 ----
+        robot.click("#guard-btn")
+        robot.wait_for_function(
+            "(() => { const t = document.getElementById('toast');"
+            " return t && !t.hidden && t.textContent.trim().length > 0; })()",
+            timeout=10000,
+        )
+        robot.wait_for_timeout(300)
+        path = SHOTS / "20_guard.png"
+        robot.screenshot(path=str(path))
+        report["shots"].append(str(path))
+        report["guard_note"] = robot.inner_text("#toast").strip()
+        # 真开起来了就关掉，别把摄像头一直占着；开不起来也必须留下真实原因
+        if "护眼开着" in report["guard_note"]:
+            robot.click("#guard-btn")
+            robot.wait_for_function(
+                "(() => document.getElementById('toast').textContent.includes('已关'))()", timeout=10000
+            )
+            report["guard_off"] = robot.inner_text("#toast").strip()
+
         # ---- 问了就该进档案：用教师端接口回查，确认不是只在前端显示 ----
         profile = api.get(f"{BASE}/api/teacher/reading/{child['id']}").json()
         report["profile_after_free"] = {
@@ -331,7 +379,7 @@ def main() -> int:
             "free_questions": profile.get("free_questions"),
             "recent": [item.get("question") for item in (profile.get("recent_questions") or [])[:2]],
         }
-        assert int(profile.get("free_questions") or 0) >= 1, "刚问的一句没进阅读档案"
+        assert int(profile.get("free_questions") or 0) >= 2, "两轮提问没都进阅读档案"
         robot.close()
 
         # ---- 3. 自动翻页：换一页、不点按钮，应自动拍并自动提交 ----

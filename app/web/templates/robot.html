@@ -44,7 +44,10 @@
     <button class="btn ghost" data-control="teacher_talk">我来讲</button>
     <button class="btn ghost" data-control="reask">再听一遍</button>
     <button class="btn ghost" id="free-btn">🙋 问一句</button>
+    <button class="btn ghost" id="guard-btn" title="只在本机算人脸大小，不拍、不存、不上传">👀 护眼</button>
   </div>
+  <video id="guard-video" playsinline muted aria-hidden="true"
+         style="position:fixed;left:-2px;top:-2px;width:2px;height:2px;opacity:0"></video>
   <div class="choice-grid" id="choices"></div>
   <div class="answer-bar" id="answer-bar" style="display:none">
     <button class="btn talk" id="mic-btn">🎤 按住说话</button>

@@ -893,6 +893,16 @@ async def device_free_audio(session_id: str, token: str = Form(...), file: Uploa
     return await runtime.ask_free(audio=await file.read())
 
 
+@api.post("/device/{session_id}/remind")
+async def device_remind(session_id: str, payload: dict = Body(...)) -> dict:
+    """坐得太近时的语音提醒：文案固定在服务端，前端只能选 kind。"""
+    _device_session(session_id, str(payload.get("token") or ""))
+    runtime = SessionRuntime.load(session_id)
+    if not runtime:
+        raise HTTPException(status_code=404, detail="这次共读已经结束了。")
+    return await runtime.remind(str(payload.get("kind") or "distance"))
+
+
 @api.post("/device/{session_id}/control")
 async def device_control(session_id: str, payload: dict = Body(...)) -> dict:
     _device_session(session_id, str(payload.get("token") or ""))

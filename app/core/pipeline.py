@@ -373,6 +373,7 @@ FREE_SYSTEM = (
     "你是幼儿园绘本共读机器人小读，正在陪 3-6 岁孩子读绘本。"
     "用 1-2 句、每句不超过 15 个字、孩子听得懂的简体中文回答。"
     "只能依据给这一页的内容回答；页里没有的细节不编，可以邀请孩子一起看看图画或翻到下一页。"
+    "孩子追问时就顺着刚才说过的话往下说，不要整段重复上一句回答。"
     "不出现英文、拼音、编号、markdown、表情符号；不讲恐怖、暴力、成人内容。"
     '只输出一个 JSON 对象：{"answer": "……"}。'
 )
@@ -405,10 +406,11 @@ async def answer_free(
     page_no: int,
     script: str,
     question: str,
+    history: list[dict] | None = None,
     tracer: Tracer | None = None,
     timeout: float = 25.0,
 ) -> dict:
-    """孩子自由提问：带当前页讲稿做上下文，短句回答；模型不可用时用安全模板。"""
+    """孩子自由提问：带当前页讲稿与最近两轮问答做上下文，短句回答；模型不可用时用安全模板。"""
     from ..services.llm import LocalLLM
 
     started = time.perf_counter()
@@ -420,10 +422,20 @@ async def answer_free(
     answer, mode = "", "rule"
     llm = LocalLLM()
     if llm.enabled:
+        # 只带最近两条有效问答，且标上当时的页号：换了页模型能分清哪句属于哪页
+        recent = [item for item in (history or []) if str(item.get("answer") or "").strip()][-2:]
+        turns_text = ""
+        if recent:
+            turns_text = "刚才聊过的：\n" + "\n".join(
+                f"- 第 {int(item.get('page_no') or 0)} 页，孩子问：{str(item.get('question') or '')[:40]}；"
+                f"你答：{str(item.get('answer') or '')[:60]}"
+                for item in recent
+            ) + "\n"
         user = (
             f"绘本：《{book.get('title') or ''}》，第 {page_no} 页。\n"
             f"这一页讲的是：{script or '（这一页还没讲，不要猜内容）'}\n"
-            f"孩子（{age} 个月）问：{question}\n"
+            f"{turns_text}"
+            f"孩子（{age} 个月）这次问：{question}\n"
             "请按系统要求只输出 JSON。"
         )
         try:
@@ -441,7 +453,10 @@ async def answer_free(
     latency = (time.perf_counter() - started) * 1000
     if tracer:
         tracer.record("free_qa", latency, provider=mode, model="llm")
-    return {"ok": True, "question": question, "answer": answer, "mode": mode, "latency_ms": round(latency)}
+    return {
+        "ok": True, "question": question, "answer": answer, "mode": mode,
+        "latency_ms": round(latency), "turns_used": len(recent) if llm.enabled and question else 0,
+    }
 
 
 async def generate_advice(session: dict, child: dict, turns: list[dict], tracer: Tracer | None = None) -> tuple[list[dict], dict]:

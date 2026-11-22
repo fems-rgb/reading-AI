@@ -42,6 +42,9 @@ STATE_LABELS = {
     "RESPONDING": "在回应",
 }
 
+# 坐得太近时的提醒文案（固定，不接受前端传任意文本）
+DISTANCE_TEXT = "坐远一点，眼睛离屏幕一臂远哦。"
+
 
 def pick_ready_page(pages: list[dict], page_no: int) -> dict | None:
     """只取老师校对过（ready）的页；needs_review 页可能是模型幻觉产物，
@@ -113,6 +116,7 @@ class SessionRuntime:
     _started_at: float = field(default_factory=time.monotonic)
     _last_rest_at: float = 0.0  # 上一次用眼提醒时的分钟数
     eye_rests: int = 0
+    distance_reminders: int = 0  # 坐得太近的语音提醒次数（只在支持人脸检测的设备上会计数）
 
     # ---------- 构造 ----------
 
@@ -170,6 +174,7 @@ class SessionRuntime:
             "last_turn": self.last_turn,
             "last_thumb": self.last_thumb,
             "eye_rests": self.eye_rests,
+            "distance_reminders": self.distance_reminders,
         }
 
     # ---------- 任务管理 ----------
@@ -344,6 +349,27 @@ class SessionRuntime:
         )
         return True
 
+    async def remind(self, kind: str = "distance") -> dict:
+        """护眼小提醒：文案固定，不接收任意文本；合成语音并计数，交给前端播。"""
+        if kind != "distance":
+            return {"ok": False, "human_hint": "这里只会提醒坐远一点。"}
+        audio: dict = {}
+        try:
+            audio = self._remember_audio(
+                await asyncio.to_thread(speech.synthesize, DISTANCE_TEXT, "")
+            )
+        except Exception:  # noqa: BLE001 没合成出来就只显示文字，不影响共读
+            audio = {}
+        self.distance_reminders += 1
+        payload = {
+            "kind": kind,
+            "text": DISTANCE_TEXT,
+            "reminders": self.distance_reminders,
+            "audio": audio,
+        }
+        self._emit("remind", payload)
+        return {**payload, "ok": True}
+
     async def _ask_after_delay(self, question: dict, read_seconds: float = 0.0) -> None:
         if self._closed or self.paused:
             return
@@ -458,12 +484,15 @@ class SessionRuntime:
 
             tracer = Tracer(self.session["id"], self.page_no)
             script = str(((self.current or {}).get("display") or {}).get("script") or "")
+            # 真多轮：带上本场最近两轮问答，孩子追问“那它为什么…”时不丢上下文
+            history = db.list_free_qas(self.session["id"])[-2:]
             result = await answer_free(
                 child=self.child,
                 book=self.book,
                 page_no=self.page_no,
                 script=script,
                 question=question,
+                history=history,
                 tracer=tracer,
             )
             await tracer.aflush()
@@ -493,6 +522,7 @@ class SessionRuntime:
                 "answer": result.get("answer", ""),
                 "mode": result.get("mode", ""),
                 "latency_ms": result.get("latency_ms", 0),
+                "turns_used": result.get("turns_used", 0),
                 "audio": reply_audio,
             }
             self._emit("free", payload)
@@ -569,6 +599,7 @@ class SessionRuntime:
                 "answered": len([turn for turn in turns if turn.get("answer_text")]),
                 "free_questions": len(db.list_free_qas(self.session["id"])),
                 "eye_rests": self.eye_rests,
+                "distance_reminders": self.distance_reminders,
                 "advice": advice_items,
                 "advice_check": advice_report,
                 "session_check": session_check,

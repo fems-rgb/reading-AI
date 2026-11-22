@@ -384,12 +384,31 @@ def step_browser() -> None:
         ok("自由回答音频可取", str(report.get("free_audio"))[-40:])
     else:
         bad("自由回答音频可取", str(report.get("free_audio"))[:80])
+    follow_text = str(report.get("free_followup") or "")
+    follow_answer = str(report.get("free_followup_answer") or "")
+    first_answer = str(report.get("free_answer_text") or "")
+    if "它手里拿的是什么" in follow_text and len(follow_answer) >= 4:
+        if follow_answer != first_answer:
+            ok("追问能接着上一轮回答", follow_answer[:40])
+        else:
+            bad("追问能接着上一轮回答", f"答案和上一轮一模一样：{follow_answer[:40]}")
+    else:
+        bad("追问能接着上一轮回答", f"没看到第二轮问答：{follow_text[:80]!r}")
+    if report.get("free_followup_audio_ok"):
+        ok("追问回答音频可取", str(report.get("free_followup_audio"))[-40:])
+    else:
+        bad("追问回答音频可取", str(report.get("free_followup_audio"))[:80])
+    guard_note = str(report.get("guard_note") or "")
+    if any(word in guard_note for word in ("FaceDetector", "护眼开着", "摄像头")):
+        ok("护眼开关如实反馈", guard_note[:46])
+    else:
+        bad("护眼开关如实反馈", f"没给出真实原因：{guard_note[:60]!r}")
     after = report.get("profile_after_free") or {}
     recent = [str(item) for item in (after.get("recent") or [])]
-    if int(after.get("free_questions") or 0) >= 1 and any("小兔子" in item for item in recent):
+    if int(after.get("free_questions") or 0) >= 2 and any("小兔子" in item for item in recent):
         ok("提问进了阅读档案", f"档案里 {after.get('free_questions')} 条提问，最近：{recent[:1]}")
     else:
-        bad("提问进了阅读档案", f"档案里没看到刚问的那句：{after!r}")
+        bad("提问进了阅读档案", f"档案里没看到刚问的两句：{after!r}")
     ended = report.get("ended") or []
     if ended == [True, True, True, True]:
         ok("四个会话均正常结束", str(ended))

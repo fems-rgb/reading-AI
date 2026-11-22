@@ -20,6 +20,8 @@ const camera = document.getElementById('camera');
 const micBtn = document.getElementById('mic-btn');
 const fsBtn = document.getElementById('fs-btn');
 const freeBtn = document.getElementById('free-btn');
+const guardBtn = document.getElementById('guard-btn');
+const guardVideo = document.getElementById('guard-video');
 
 const HEARTBEAT_MS = 15000;
 const PONG_TIMEOUT_MS = 25000;
@@ -41,6 +43,7 @@ let pollTimer = null;
 let renderedKey = '';     // 防止轮询模式下每 2s 重绘/重播
 let lastThumb = null;     // 最近一页的小图：提问/回答时留个画面参照，别让绘本页凭空消失
 let talkMode = 'answer';  // answer = 回答提问，free = 孩子自己提问
+let guard = null;         // 护眼检测：{stream, detector, timer, hits, lastAt}
 
 function toast(text) {
   const el = document.getElementById('toast');
@@ -381,6 +384,7 @@ function shutDown(code) {
   choicesBox.innerHTML = '';
   answerBar.style.display = 'none';
   cancelTalk();
+  guardOff(true);
   setMain('本次共读结束', false);
 }
 
@@ -572,6 +576,7 @@ function handleEvent(name, data) {
     choicesBox.innerHTML = '';
     answerBar.style.display = 'none';
     cancelTalk();
+    guardOff(true);
     setMain('本次共读结束', false);
     return;
   }
@@ -812,6 +817,91 @@ if (micBtn) {
 }
 
 if (freeBtn) freeBtn.addEventListener('click', enterFree);
+
+// ---------------- 护眼：坐得太近就提醒 ----------------
+// 只有浏览器支持 FaceDetector 才开；人脸比例只在本机内存里算，不拍、不存、不上传。
+function guardOff(silent) {
+  if (!guard) return;
+  clearInterval(guard.timer);
+  guard.stream.getTracks().forEach((track) => track.stop());
+  if (guardVideo) guardVideo.srcObject = null;
+  guard = null;
+  if (guardBtn) guardBtn.textContent = '👀 护眼';
+  if (!silent) toast('护眼检测已关');
+}
+
+async function guardOn() {
+  if (!('FaceDetector' in window)) {
+    toast('这个浏览器没有 FaceDetector，测不了距离；换 Chrome 桌面版试试');
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast('这台设备没有可用的前置摄像头');
+    return;
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: {facingMode: 'user'}, audio: false,
+    });
+  } catch (error) {
+    toast('没拿到前置摄像头权限，护眼提醒没开');
+    return;
+  }
+  if (guardVideo) {
+    guardVideo.srcObject = stream;
+    guardVideo.play().catch(() => {});
+  }
+  guard = {
+    stream,
+    detector: new window.FaceDetector({fastMode: true, maxDetectedFaces: 1}),
+    timer: setInterval(checkDistance, 3000),
+    hits: 0,
+    lastAt: 0,
+  };
+  if (guardBtn) guardBtn.textContent = '👀 护眼里';
+  toast('护眼开着：只在本机算人脸大小，不拍、不存、不上传');
+}
+
+async function checkDistance() {
+  if (!guard || !guardVideo || !guardVideo.videoWidth) return;
+  let faces = [];
+  try {
+    faces = await guard.detector.detect(guardVideo);
+  } catch (error) {
+    guardOff(true);
+    return;
+  }
+  if (!faces.length) { guard.hits = 0; return; }
+  const height = (faces[0].boundingBox || {}).height || 0;
+  const ratio = height / (guardVideo.videoHeight || 1);
+  if (ratio <= 0.55) { guard.hits = 0; return; }  // 一臂远时人脸占比不会超过一半
+  guard.hits += 1;
+  if (guard.hits < 2) return;  // 连续两帧都太近才提醒，低头凑近看一眼不算
+  const stamp = Date.now();
+  if (stamp - guard.lastAt < 60000) return;  // 一分钟内只提醒一次
+  guard.lastAt = stamp;
+  guard.hits = 0;
+  toast('坐远一点，眼睛离屏幕一臂远哦');
+  try {
+    const reply = await fetch(`/api/device/${R.sessionId}/remind`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({token: R.token, kind: 'distance'}),
+    });
+    if (reply.status === 403) return shutDown(4401);
+    if (!reply.ok) return;
+    const data = await reply.json();
+    playAudio(((data || {}).audio || {}).url);
+  } catch (error) { /* 服务端没合成出来：字已经提示过了 */ }
+}
+
+if (guardBtn) {
+  guardBtn.addEventListener('click', () => {
+    if (guard) guardOff(false);
+    else guardOn();
+  });
+}
 
 if (fsBtn) {
   fsBtn.addEventListener('click', () => {
