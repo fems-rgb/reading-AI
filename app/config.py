@@ -76,6 +76,8 @@ class Settings:
     question_delay_seconds: float
     listen_timeout_seconds: float
     teacher_timeout_seconds: float
+    # 连续共读多少分钟提醒歇眼睛；设 0 关闭
+    eye_rest_minutes: float
     page_limit_per_session: int
     daily_call_limit: int
     asr_confirm_threshold: float
@@ -166,6 +168,7 @@ def get_settings() -> Settings:
         question_delay_seconds=_number("QUESTION_DELAY_SECONDS", 8),
         listen_timeout_seconds=_number("LISTEN_TIMEOUT_SECONDS", 20),
         teacher_timeout_seconds=_number("TEACHER_TIMEOUT_SECONDS", 15),
+        eye_rest_minutes=_number("EYE_REST_MINUTES", 20),
         page_limit_per_session=_whole("PAGE_LIMIT_PER_SESSION", 60),
         daily_call_limit=_whole("DAILY_CALL_LIMIT", 3000),
         asr_confirm_threshold=_number("ASR_CONFIRM_THRESHOLD", 0.75),

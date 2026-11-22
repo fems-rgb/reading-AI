@@ -369,6 +369,81 @@ async def handle_answer(
     }
 
 
+FREE_SYSTEM = (
+    "你是幼儿园绘本共读机器人小读，正在陪 3-6 岁孩子读绘本。"
+    "用 1-2 句、每句不超过 15 个字、孩子听得懂的简体中文回答。"
+    "只能依据给这一页的内容回答；页里没有的细节不编，可以邀请孩子一起看看图画或翻到下一页。"
+    "不出现英文、拼音、编号、markdown、表情符号；不讲恐怖、暴力、成人内容。"
+    '只输出一个 JSON 对象：{"answer": "……"}。'
+)
+
+# 孩子会听到的话，这几类一律不进回调
+_FREE_UNSAFE = ("死", "血", "杀", "尸", "鬼", "恐怖", "暴力", "自杀", "裸", "性器官")
+
+
+def _clean_free_answer(text: str) -> str:
+    """自由回答的出口闸门：去格式、控长度、拦不适龄词。不合格就返回空串走安全模板。"""
+    import re
+
+    cleaned = re.sub(r"```[a-zA-Z]*", "", text or "").replace("`", "").strip()
+    cleaned = cleaned.strip("\"'“”‘’ ")
+    if not cleaned:
+        return ""
+    if any(word in cleaned for word in _FREE_UNSAFE):
+        return ""
+    if len(re.findall(r"[A-Za-z]{3,}", cleaned)) >= 2:  # 两句英文就该换中文模板
+        return ""
+    sentences = split_sentences(cleaned)[:2]
+    answer = "".join(sentences) if sentences else cleaned
+    return truncate(answer, 60)
+
+
+async def answer_free(
+    *,
+    child: dict,
+    book: dict,
+    page_no: int,
+    script: str,
+    question: str,
+    tracer: Tracer | None = None,
+    timeout: float = 25.0,
+) -> dict:
+    """孩子自由提问：带当前页讲稿做上下文，短句回答；模型不可用时用安全模板。"""
+    from ..services.llm import LocalLLM
+
+    started = time.perf_counter()
+    question = (question or "").strip()
+    age = int(child.get("age_months") or 48)
+    if not question:
+        return {"ok": False, "question": "", "answer": "我没听清，再说一遍好吗？", "mode": "guard", "latency_ms": 0}
+
+    answer, mode = "", "rule"
+    llm = LocalLLM()
+    if llm.enabled:
+        user = (
+            f"绘本：《{book.get('title') or ''}》，第 {page_no} 页。\n"
+            f"这一页讲的是：{script or '（这一页还没讲，不要猜内容）'}\n"
+            f"孩子（{age} 个月）问：{question}\n"
+            "请按系统要求只输出 JSON。"
+        )
+        try:
+            data, _meta = await asyncio.wait_for(
+                asyncio.to_thread(llm.chat_json, FREE_SYSTEM, user, 0.5), timeout=timeout
+            )
+            answer = _clean_free_answer(str((data or {}).get("answer") or ""))
+            mode = "llm" if answer else "gate"
+        except Exception:  # 模型超时/没启用都不得让孩子干等
+            answer = ""
+    if not answer:
+        answer = "这个问题问得真好，我们再看看这一页，一起找找答案。" if "为什么" in question else "我们一起看看图画里有什么，好吗？"
+        mode = "rule"
+
+    latency = (time.perf_counter() - started) * 1000
+    if tracer:
+        tracer.record("free_qa", latency, provider=mode, model="llm")
+    return {"ok": True, "question": question, "answer": answer, "mode": mode, "latency_ms": round(latency)}
+
+
 async def generate_advice(session: dict, child: dict, turns: list[dict], tracer: Tracer | None = None) -> tuple[list[dict], dict]:
     """A10 + 自检：无依据的建议直接丢弃，不写进库。"""
     tracer = tracer or Tracer(session["id"], 0)

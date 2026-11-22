@@ -35,9 +35,10 @@ document.getElementById('tabs').addEventListener('click', (event) => {
   const tab = event.target.closest('.tab');
   if (!tab) return;
   document.querySelectorAll('.tab').forEach((item) => item.classList.toggle('active', item === tab));
-  ['overview', 'live', 'library', 'advice', 'reports', 'ops'].forEach((name) => {
+  ['overview', 'profile', 'live', 'library', 'advice', 'reports', 'ops'].forEach((name) => {
     document.getElementById(`tab-${name}`).style.display = name === tab.dataset.tab ? '' : 'none';
   });
+  if (tab.dataset.tab === 'profile') loadProfile();
 });
 
 async function logout() {
@@ -90,6 +91,57 @@ async function loadOverview() {
   }
 }
 
+// ---------------- 阅读档案 ----------------
+
+async function loadProfile() {
+  const select = document.getElementById('profile-child');
+  if (!select.value && select.options.length) select.selectedIndex = 0;
+  if (!select.value) {
+    document.getElementById('pf-daily').innerHTML = '<p class="small muted">还没有孩子，先去「周报与授权」加入班级。</p>';
+    return;
+  }
+  try {
+    const data = await api(`/api/teacher/reading/${encodeURIComponent(select.value)}`);
+    document.getElementById('pf-pages').textContent = data.pages;
+    document.getElementById('pf-books').textContent = data.books_read;
+    document.getElementById('pf-minutes').textContent = data.minutes;
+    document.getElementById('pf-answered').textContent = data.pages ? `${data.answered_ratio}%` : '–';
+    document.getElementById('pf-understood').textContent = data.pages ? `${data.understood_yes}/${data.pages}` : '–';
+    document.getElementById('pf-free').textContent = data.free_questions;
+    renderDaily(data.daily || []);
+    document.getElementById('pf-books-list').innerHTML = (data.books || []).map((book) => `
+      <div class="item">
+        <div class="title">《${escapeHtml(book.title)}》</div>
+        <div class="body">${book.pages} 页 · 最近一次 ${escapeHtml((book.last_at || '').slice(0, 16))}</div>
+      </div>`).join('') || '<div class="empty">这本书还没有被读过。</div>';
+    document.getElementById('pf-questions').innerHTML = (data.recent_questions || []).map((item) => `
+      <div class="item">
+        <div class="title">问：${escapeHtml(item.question)}</div>
+        <div class="body">第 ${item.page_no} 页《${escapeHtml(item.book_title || '')}》 · 小读答：${escapeHtml(item.answer)}</div>
+      </div>`).join('') || '<div class="empty">孩子还没主动提问过。共读时点【🙋 问一句】就能问。</div>';
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+function renderDaily(rows) {
+  const box = document.getElementById('pf-daily');
+  const map = new Map((rows || []).map((row) => [row.day, row.pages]));
+  const days = [];
+  const today = new Date();
+  for (let i = 13; i >= 0; i -= 1) {
+    const d = new Date(today.getTime() - i * 86400000);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    days.push({label: `${d.getMonth() + 1}/${d.getDate()}`, pages: map.get(key) || 0});
+  }
+  const max = Math.max(1, ...days.map((day) => day.pages));
+  const total = days.reduce((sum, day) => sum + day.pages, 0);
+  box.innerHTML = `<div class="bars">${days.map((day) => `
+    <div class="bar${day.pages ? '' : ' zero'}" title="${day.label} · ${day.pages} 页" style="height:${Math.max(3, Math.round(day.pages / max * 88))}px"></div>`).join('')}
+  </div>
+  <div class="small muted" style="margin-top:6px">${days[0].label} → ${days[days.length - 1].label} · 共 ${total} 页</div>`;
+}
+
 function renderActiveSessions(items) {
   const box = document.getElementById('active-sessions');
   if (!items.length) {
@@ -112,6 +164,11 @@ async function loadChildren() {
   document.getElementById('live-child').innerHTML = data.items
     .map((child) => `<option value="${child.id}">${escapeHtml(child.name)} · ${escapeHtml(child.age_label)}</option>`).join('');
   const list = document.getElementById('children-list');
+  const profileSelect = document.getElementById('profile-child');
+  if (profileSelect) {
+    profileSelect.innerHTML = data.items
+      .map((child) => `<option value="${child.id}">${escapeHtml(child.name)} · ${escapeHtml(child.age_label)}</option>`).join('');
+  }
   list.innerHTML = data.items.map((child) => `
     <div class="item">
       <div class="title">${escapeHtml(child.name)}
@@ -320,6 +377,13 @@ function handleEvent(message) {
     toast(data.human_hint || '照片需要重拍');
   } else if (message.event === 'timeout') {
     toast(data.human_hint || '孩子没有回答');
+  } else if (message.event === 'free') {
+    document.getElementById('live-head').innerHTML =
+      `孩子问：${escapeHtml(data.question || '（没听清）')} · 小读答：${escapeHtml(data.answer || '')}`;
+    scheduleRefresh();
+  } else if (message.event === 'eye_rest') {
+    toast(data.human_hint || '该歇眼睛了');
+    scheduleRefresh();
   } else if (message.event === 'ended') {
     toast('这次共读结束了');
     document.getElementById('live-state').textContent = '已结束';
@@ -718,6 +782,7 @@ async function runAudit() {
     runSystemCheck(false);
     loadHistory();
     loadMetrics();
+    loadProfile();
   } catch (error) {
     toast(error.message);
   }

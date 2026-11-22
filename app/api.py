@@ -104,6 +104,21 @@ async def overview(role: str = Depends(auth.require_teacher)) -> dict:
     }
 
 
+@api.get("/teacher/reading/{child_id}")
+async def reading_profile(child_id: int, days: int = 14, role: str = Depends(auth.require_teacher)) -> dict:
+    """阅读档案：页数/时长/回应/自由提问全部从真实记录聚合，不做估算。"""
+    child = db.get_child(child_id)
+    if not child:
+        raise HTTPException(status_code=404, detail="没有这个孩子的记录。")
+    profile = db.reading_profile(child_id, days=max(1, min(int(days), 60)))
+    profile["child"] = {
+        "id": child["id"],
+        "name": child["name"],
+        "age_months": child.get("age_months") or 0,
+    }
+    return profile
+
+
 # ---------------- 教师端：幼儿与授权 ----------------
 
 
@@ -858,6 +873,26 @@ async def device_listen(session_id: str, token: str = Form(...), file: UploadFil
     return await runtime.answer(audio=data)
 
 
+@api.post("/device/{session_id}/free")
+async def device_free(session_id: str, payload: dict = Body(...)) -> dict:
+    """孩子自由提问（文字）：带当前页讲稿上下文回答。"""
+    _device_session(session_id, str(payload.get("token") or ""))
+    runtime = SessionRuntime.load(session_id)
+    if not runtime:
+        raise HTTPException(status_code=404, detail="这次共读已经结束了。")
+    return await runtime.ask_free(text=str(payload.get("text") or ""))
+
+
+@api.post("/device/{session_id}/free-audio")
+async def device_free_audio(session_id: str, token: str = Form(...), file: UploadFile = File(...)) -> dict:
+    """孩子自由提问（语音）：先转写，再带上下文回答。"""
+    _device_session(session_id, token)
+    runtime = SessionRuntime.load(session_id)
+    if not runtime:
+        raise HTTPException(status_code=404, detail="这次共读已经结束了。")
+    return await runtime.ask_free(audio=await file.read())
+
+
 @api.post("/device/{session_id}/control")
 async def device_control(session_id: str, payload: dict = Body(...)) -> dict:
     _device_session(session_id, str(payload.get("token") or ""))
@@ -934,6 +969,9 @@ async def device_ws(websocket: WebSocket, session_id: str, token: str = "") -> N
                     spawn("answer", runtime.answer(text=str(message.get("text") or "")))
                 elif kind == "audio":
                     spawn("answer", runtime.answer(audio=base64.b64decode(message.get("audio") or "")))
+                elif kind == "free":
+                    raw = base64.b64decode(message.get("audio") or "") if message.get("audio") else b""
+                    spawn("free", runtime.ask_free(text=str(message.get("text") or ""), audio=raw))
                 elif kind == "control":
                     spawn("control", runtime.control(str(message.get("action") or "")))
                 else:

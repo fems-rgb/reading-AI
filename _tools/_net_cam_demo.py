@@ -303,6 +303,35 @@ def main() -> int:
         robot.screenshot(path=str(path))
         report["shots"].append(str(path))
         report["question"] = robot.inner_text("#stage").replace("\n", " / ")[:160]
+
+        # ---- 孩子自己提问：🙋 问一句 → 打字 → 说完了 → 回答上屏并合成语音 ----
+        robot.click("#free-btn")
+        robot.fill("#answer-input", "小兔子为什么在草地上跑呀？")
+        robot.click("#answer-send")
+        robot.wait_for_function(
+            "(() => document.getElementById('stage').textContent.includes('小朋友问'))()",
+            timeout=90000,
+        )
+        robot.wait_for_timeout(400)
+        path = SHOTS / "13_free.png"
+        robot.screenshot(path=str(path))
+        report["shots"].append(str(path))
+        report["free_answer"] = robot.inner_text("#stage").replace("\n", " / ")[:200]
+        free_audio = robot.evaluate(
+            "(() => { try { return (currentAudio && currentAudio.src) || ''; } catch (e) { return ''; } })()"
+        )
+        report["free_audio"] = free_audio
+        if free_audio:
+            media = context.request.get(free_audio)
+            report["free_audio_ok"] = bool(media.ok and len(media.body()) > 2048)
+        # ---- 问了就该进档案：用教师端接口回查，确认不是只在前端显示 ----
+        profile = api.get(f"{BASE}/api/teacher/reading/{child['id']}").json()
+        report["profile_after_free"] = {
+            "pages": profile.get("pages"),
+            "free_questions": profile.get("free_questions"),
+            "recent": [item.get("question") for item in (profile.get("recent_questions") or [])[:2]],
+        }
+        assert int(profile.get("free_questions") or 0) >= 1, "刚问的一句没进阅读档案"
         robot.close()
 
         # ---- 3. 自动翻页：换一页、不点按钮，应自动拍并自动提交 ----

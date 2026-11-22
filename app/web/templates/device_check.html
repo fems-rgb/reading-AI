@@ -41,6 +41,15 @@
   </section>
 
   <section class="stage check-card">
+    <h3>距离检测（可选）</h3>
+    <video id="dist-cam" playsinline muted class="check-video" hidden></video>
+    <div class="robot-side check-row">
+      <button class="btn" id="dist-run">用前置摄像头测一次</button>
+    </div>
+    <p class="small muted" id="dist-note">只看一帧：脸在画面里占得太高就当“离太近”。浏览器没有 FaceDetector 时就如实说测不了，不编结果。</p>
+  </section>
+
+  <section class="stage check-card">
     <h3>麦克风</h3>
     <div class="meter"><div class="meter-fill" id="mic-fill"></div></div>
     <div class="robot-side check-row">

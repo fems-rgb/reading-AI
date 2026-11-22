@@ -32,6 +32,7 @@
     {% endif %}
   </div>
   <div class="story" id="story" hidden></div>
+  <div class="story rest" id="rest" hidden></div>
 
   {% if session %}
   <div class="big-actions">
@@ -42,6 +43,7 @@
     <button class="btn ghost" data-control="skip">跳过</button>
     <button class="btn ghost" data-control="teacher_talk">我来讲</button>
     <button class="btn ghost" data-control="reask">再听一遍</button>
+    <button class="btn ghost" id="free-btn">🙋 问一句</button>
   </div>
   <div class="choice-grid" id="choices"></div>
   <div class="answer-bar" id="answer-bar" style="display:none">

@@ -109,6 +109,19 @@ CREATE TABLE IF NOT EXISTS turns (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS free_qas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    page_no INTEGER NOT NULL DEFAULT 0,
+    question TEXT NOT NULL DEFAULT '',
+    answer TEXT NOT NULL DEFAULT '',
+    asr_confidence REAL DEFAULT 0,
+    latency_ms REAL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_free_qas_session ON free_qas(session_id, id);
+
 CREATE TABLE IF NOT EXISTS advice (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     child_id INTEGER NOT NULL REFERENCES children(id),
@@ -381,6 +394,8 @@ def delete_child_everything(child_id: int) -> dict:
     sessions = q("SELECT id FROM sessions WHERE child_id=?", (child_id,))
     with tx() as conn:
         conn.execute("DELETE FROM turns WHERE session_id IN (SELECT id FROM sessions WHERE child_id=?)", (child_id,))
+        # 孩子自己问的话同样属于儿童数据，删除授权后一条不留
+        conn.execute("DELETE FROM free_qas WHERE session_id IN (SELECT id FROM sessions WHERE child_id=?)", (child_id,))
         conn.execute("DELETE FROM sessions WHERE child_id=?", (child_id,))
         conn.execute("DELETE FROM advice WHERE child_id=?", (child_id,))
         conn.execute("DELETE FROM weekly_reports WHERE child_id=?", (child_id,))
@@ -577,6 +592,95 @@ def list_turns(session_id: str) -> list[dict]:
         except json.JSONDecodeError:
             row["checker"] = {}
     return rows
+
+
+# ---------------- 孩子自由提问 ----------------
+
+
+def add_free_qa(
+    session_id: str,
+    page_no: int,
+    question: str,
+    answer: str,
+    asr_confidence: float = 0.0,
+    latency_ms: float = 0.0,
+) -> int:
+    return x(
+        "INSERT INTO free_qas(session_id, page_no, question, answer, asr_confidence, latency_ms, created_at)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (session_id, page_no, question, answer, round(float(asr_confidence or 0), 3), round(float(latency_ms or 0), 1), now()),
+    )
+
+
+def list_free_qas(session_id: str) -> list[dict]:
+    return q("SELECT * FROM free_qas WHERE session_id=? ORDER BY id", (session_id,))
+
+
+# ---------------- 阅读档案 ----------------
+
+
+def reading_profile(child_id: int, days: int = 14) -> dict:
+    """按孩子聚合真实记录：页数、绘本、时长、回应、自由提问。
+
+    全部从 turns/sessions/free_qas 直查，不做任何估算；没记录就是 0。
+    """
+    totals = q1(
+        "SELECT COUNT(t.id) AS pages, COUNT(DISTINCT t.session_id) AS sessions,"
+        " SUM(CASE WHEN TRIM(COALESCE(t.answer_text,''))<>'' THEN 1 ELSE 0 END) AS answered,"
+        " SUM(CASE WHEN t.understood='yes' THEN 1 ELSE 0 END) AS understood_yes,"
+        " SUM(CASE WHEN t.understood='partial' THEN 1 ELSE 0 END) AS understood_partial"
+        " FROM turns t JOIN sessions s ON s.id=t.session_id WHERE s.child_id=?",
+        (child_id,),
+    ) or {}
+    minutes_row = q1(
+        # 已结束的会话用 ended_at；还在进行中的用“最后一次翻页时刻”，
+        # 老师忘点结束时不会接着涨，单场仍有 180 分钟上限防脏数据
+        "SELECT SUM(MIN((julianday(COALESCE(s.ended_at,"
+        " (SELECT MAX(t.created_at) FROM turns t WHERE t.session_id=s.id),"
+        " s.created_at)) - julianday(s.created_at)) * 1440.0, 180.0)) AS minutes"
+        " FROM sessions s WHERE s.child_id=?",
+        (child_id,),
+    ) or {}
+    free_row = q1(
+        "SELECT COUNT(*) AS n FROM free_qas f JOIN sessions s ON s.id=f.session_id WHERE s.child_id=?",
+        (child_id,),
+    ) or {}
+    books = q(
+        "SELECT b.id, b.title, COUNT(t.id) AS pages, MAX(t.created_at) AS last_at"
+        " FROM turns t JOIN sessions s ON s.id=t.session_id JOIN books b ON b.id=s.book_id"
+        " WHERE s.child_id=? GROUP BY b.id, b.title ORDER BY last_at DESC",
+        (child_id,),
+    )
+    daily = q(
+        "SELECT date(t.created_at) AS day, COUNT(*) AS pages"
+        " FROM turns t JOIN sessions s ON s.id=t.session_id"
+        " WHERE s.child_id=? AND date(t.created_at)>=date('now', ?)"
+        " GROUP BY day ORDER BY day",
+        (child_id, f"-{int(days)} days"),
+    )
+    recent = q(
+        "SELECT f.question, f.answer, f.page_no, f.created_at, b.title AS book_title"
+        " FROM free_qas f JOIN sessions s ON s.id=f.session_id JOIN books b ON b.id=s.book_id"
+        " WHERE s.child_id=? ORDER BY f.id DESC LIMIT 6",
+        (child_id,),
+    )
+    pages = int(totals.get("pages") or 0)
+    answered = int(totals.get("answered") or 0)
+    return {
+        "child_id": child_id,
+        "pages": pages,
+        "sessions": int(totals.get("sessions") or 0),
+        "books_read": len(books),
+        "minutes": int(round(float(minutes_row.get("minutes") or 0))),
+        "answered": answered,
+        "answered_ratio": round(answered / pages * 100) if pages else 0,
+        "understood_yes": int(totals.get("understood_yes") or 0),
+        "understood_partial": int(totals.get("understood_partial") or 0),
+        "free_questions": int(free_row.get("n") or 0),
+        "books": books,
+        "daily": daily,
+        "recent_questions": recent,
+    }
 
 
 # ---------------- 教学建议 ----------------

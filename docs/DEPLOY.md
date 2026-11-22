@@ -122,6 +122,11 @@ scripts\install.ps1 -BackupAt 20:00
   （`shell:startup` 可打开该目录）。
 - 换端口：改 `.env` 的 `PORT`，同时把防火墙规则里的 8000 改掉。
 - 换模型：改 `.env` 的 `LLM_MODEL` / `VLM_MODEL`（Ollama 里的名字），重启服务。
+- 护眼提醒：`EYE_REST_MINUTES` 默认 20 分钟，设为 0 关闭；改完重启服务。
+  机器人端只在“连续用眼”满点时提一次，上一页提问会先让位给休息提醒。
+- 阅读档案：教师端「阅读档案」选孩子就能看页数/绘本/时长/回应/提问，数据全从
+  `turns/sessions/free_qas` 直查聚合；接口是 `GET /api/teacher/reading/{孩子id}?days=14`，
+  复核用 `python _tools\recheck.py profile`（会拿接口数字回 SQLite 对账）。
 - 关掉某个引擎：把对应 `*_MODE` 改为 `stub` 会退回确定性规则（首页会提示演示模式），
   一般不建议在验收/生产环境这么做。
 

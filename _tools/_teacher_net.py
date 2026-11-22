@@ -51,8 +51,30 @@ def main() -> int:
         )
         path2 = SHOTS / "16_teacher_net_captured.png"
         page.screenshot(path=str(path2))
-        payload = {"choices": choices, "hint": page.inner_text("#src-hint"),
-                   "shots": [str(path), str(path2)], "console_errors": errors}
+        hint = page.inner_text("#src-hint")
+        page.click('[data-src="cancel"]')
+        page.wait_for_selector(".src-mask", state="hidden")
+
+        # 阅读档案：真点开 tab，看 14 天柱状和 KPI 是不是真从接口数据渲染
+        page.click('[data-tab="profile"]')
+        page.wait_for_function(
+            "document.querySelectorAll('#pf-daily .bar').length === 14", timeout=15000
+        )
+        path3 = SHOTS / "18_teacher_profile.png"
+        page.screenshot(path=str(path3))
+        profile = {
+            "pages": page.inner_text("#pf-pages"),
+            "books": page.inner_text("#pf-books"),
+            "minutes": page.inner_text("#pf-minutes"),
+            "answered": page.inner_text("#pf-answered"),
+            "free": page.inner_text("#pf-free"),
+            "bars": page.eval_on_selector_all("#pf-daily .bar", "els => els.length"),
+            "questions": page.eval_on_selector_all("#pf-questions .item", "els => els.length"),
+            "child": page.eval_on_selector("#profile-child", "el => el.options[el.selectedIndex].text"),
+        }
+        payload = {"choices": choices, "hint": hint,
+                   "shots": [str(path), str(path2), str(path3)], "profile": profile,
+                   "console_errors": errors}
         (SHOTS / "teacher_net_report.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )

@@ -20,6 +20,7 @@
 
 <div class="tabs" id="tabs">
   <button class="tab active" data-tab="overview">今日概览</button>
+  <button class="tab" data-tab="profile">阅读档案</button>
   <button class="tab" data-tab="live">开始共读</button>
   <button class="tab" data-tab="library">绘本库 / 题库</button>
   <button class="tab" data-tab="advice">教学建议</button>
@@ -67,6 +68,44 @@
   <div class="card" style="margin-top:16px">
     <h2>进行中的共读</h2>
     <div id="active-sessions" class="list" style="margin-top:12px"></div>
+  </div>
+</section>
+
+<!-- ============ 阅读档案 ============ -->
+<section id="tab-profile" style="display:none">
+  <div class="card">
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap">
+      <div><h2>阅读档案</h2><p class="hint">页数、时长、回应、主动提问全部从真实记录聚合；没有记录就是 0，不做估算。</p></div>
+      <div class="row">
+        <select id="profile-child" onchange="loadProfile()"></select>
+        <button class="btn ghost small" onclick="loadProfile()">刷新</button>
+      </div>
+    </div>
+    <div class="kpi" style="margin-top:14px">
+      <div class="card"><b id="pf-pages">–</b><span>累计页数</span></div>
+      <div class="card"><b id="pf-books">–</b><span>读过绘本</span></div>
+      <div class="card"><b id="pf-minutes">–</b><span>共读时长（分钟）</span></div>
+      <div class="card"><b id="pf-answered">–</b><span>有回应比例</span></div>
+      <div class="card"><b id="pf-understood">–</b><span>全对页数 / 总页数</span></div>
+      <div class="card"><b id="pf-free">–</b><span>孩子主动提问</span></div>
+    </div>
+  </div>
+
+  <div class="grid cols-2" style="margin-top:16px;align-items:start">
+    <div class="card">
+      <h2>近两周每天读了几页</h2>
+      <div id="pf-daily"></div>
+    </div>
+    <div class="card">
+      <h2>读过的绘本</h2>
+      <div id="pf-books-list" class="list" style="margin-top:12px"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h2>孩子最近问了什么</h2>
+    <p class="hint">这些问题由小读现场回答，已经过出口闸门；点不到的说明还没问过。</p>
+    <div id="pf-questions" class="list" style="margin-top:12px"></div>
   </div>
 </section>
 

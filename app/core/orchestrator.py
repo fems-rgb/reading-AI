@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import io
+import time
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
@@ -23,7 +24,14 @@ from ..services import speech
 from ..services.metrics import Tracer
 from ..services.selfcheck import check_session
 from ..utils import now, truncate
-from .pipeline import PageRequest, analyze_page, build_weekly_report, generate_advice, handle_answer
+from .pipeline import (
+    PageRequest,
+    analyze_page,
+    answer_free,
+    build_weekly_report,
+    generate_advice,
+    handle_answer,
+)
 
 STATE_LABELS = {
     "IDLE": "休息中",
@@ -102,6 +110,9 @@ class SessionRuntime:
     _tasks: set[asyncio.Task] = field(default_factory=set)
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     _closed: bool = False
+    _started_at: float = field(default_factory=time.monotonic)
+    _last_rest_at: float = 0.0  # 上一次用眼提醒时的分钟数
+    eye_rests: int = 0
 
     # ---------- 构造 ----------
 
@@ -158,6 +169,7 @@ class SessionRuntime:
             "current": self.current,
             "last_turn": self.last_turn,
             "last_thumb": self.last_thumb,
+            "eye_rests": self.eye_rests,
         }
 
     # ---------- 任务管理 ----------
@@ -285,12 +297,52 @@ class SessionRuntime:
             )
             db.update_session(self.session["id"], last_page_no=page_no)
 
+            # 连着读满设定时长：这一页就不再提问，先带孩子歇眼睛
+            if await self._maybe_eye_rest():
+                self.state = "IDLE"
+                self._emit("state", {"page_no": page_no})
+                return result
+
             # 留出看画面 + 听讲稿的时间，再开口提问；连续翻页会取消旧任务
             self.state = "QUESTIONING"
             self._emit("state", {"page_no": page_no})
             read_seconds = float(read_audio.get("duration") or 0)
             self._spawn(lambda: self._ask_after_delay(result["question"], read_seconds))
             return result
+
+    async def _maybe_eye_rest(self) -> bool:
+        """连续共读满 EYE_REST_MINUTES 分钟，就用语音带孩子歇一次眼睛。
+
+        只看真实已经过的时长，不假装在做距离/坐姿识别；设 0 就关掉。
+        """
+        try:
+            minutes = float(get_settings().eye_rest_minutes or 0)
+        except (TypeError, ValueError):
+            minutes = 0.0
+        if minutes <= 0:
+            return False
+        elapsed = (time.monotonic() - self._started_at) / 60
+        if elapsed - self._last_rest_at < minutes:
+            return False
+        self._last_rest_at = elapsed
+        self.eye_rests += 1
+        audio: dict = {}
+        try:
+            audio = self._remember_audio(
+                await asyncio.to_thread(speech.synthesize, "我们休息一下眼睛吧。看看窗外，眨眨眼。", "")
+            )
+        except Exception:  # noqa: BLE001 提醒失败不影响共读
+            audio = {}
+        self._emit(
+            "eye_rest",
+            {
+                "minutes": int(elapsed),
+                "rests": self.eye_rests,
+                "human_hint": f"已经读了 {int(elapsed)} 分钟啦。让眼睛歇一歇，看看窗外远处，眨眨眼。",
+                "audio": audio,
+            },
+        )
+        return True
 
     async def _ask_after_delay(self, question: dict, read_seconds: float = 0.0) -> None:
         if self._closed or self.paused:
@@ -391,6 +443,63 @@ class SessionRuntime:
             )
             return result
 
+    async def ask_free(self, text: str = "", audio: bytes = b"") -> dict:
+        """孩子自己想到的问题：带当前页讲稿做上下文，短句回答并合成语音。"""
+        async with self._lock:
+            if self._closed:
+                return {"ok": False, "human_hint": "这次共读已经结束了。"}
+            if not self.current:
+                return {"ok": False, "human_hint": "先拍一页，我看看画面再回答你。"}
+            language = (self.book.get("language") or "zh").lower()
+            asr = {"text": text, "confidence": 1.0 if text else 0.0, "mode": "text"}
+            if not text and audio:
+                asr = await asyncio.to_thread(speech.transcribe, audio, language)
+            question = str(asr.get("text") or "").strip()
+
+            tracer = Tracer(self.session["id"], self.page_no)
+            script = str(((self.current or {}).get("display") or {}).get("script") or "")
+            result = await answer_free(
+                child=self.child,
+                book=self.book,
+                page_no=self.page_no,
+                script=script,
+                question=question,
+                tracer=tracer,
+            )
+            await tracer.aflush()
+
+            reply_audio: dict = {}
+            if result.get("answer"):
+                try:
+                    reply_audio = self._remember_audio(
+                        await asyncio.to_thread(speech.synthesize, result["answer"], "")
+                    )
+                except Exception:  # noqa: BLE001 没合成就只显示文字
+                    reply_audio = {}
+
+            if question and result.get("ok"):
+                db.add_free_qa(
+                    self.session["id"],
+                    self.page_no,
+                    question,
+                    str(result.get("answer") or ""),
+                    asr_confidence=float(asr.get("confidence") or 0),
+                    latency_ms=float(result.get("latency_ms") or 0),
+                )
+
+            payload = {
+                "page_no": self.page_no,
+                "question": question,
+                "answer": result.get("answer", ""),
+                "mode": result.get("mode", ""),
+                "latency_ms": result.get("latency_ms", 0),
+                "audio": reply_audio,
+            }
+            self._emit("free", payload)
+            if not question:
+                return {**payload, "ok": False, "human_hint": "我没听清，再说一遍好吗？", "asr": asr}
+            return {**payload, "ok": bool(result.get("ok")), "asr": asr}
+
     async def control(self, action: str) -> dict:
         if action == "pause":
             self.paused = True
@@ -458,6 +567,8 @@ class SessionRuntime:
             summary = {
                 "pages": len(turns),
                 "answered": len([turn for turn in turns if turn.get("answer_text")]),
+                "free_questions": len(db.list_free_qas(self.session["id"])),
+                "eye_rests": self.eye_rests,
                 "advice": advice_items,
                 "advice_check": advice_report,
                 "session_check": session_check,

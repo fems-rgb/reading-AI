@@ -382,4 +382,51 @@ async function runEngineCheck() {
 $('engine-run').addEventListener('click', runEngineCheck);
 loadEngineModes();
 
+// ---------------- 距离检测（只在浏览器真支持时才测） ----------------
+
+async function runDistanceCheck() {
+  const note = $('dist-note');
+  const video = $('dist-cam');
+  if (!('FaceDetector' in window)) {
+    note.textContent = '这台浏览器没有人脸检测接口（FaceDetector），所以不测——不给你假结果。';
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    note.textContent = '这个页面拿不到摄像头权限（不是 https/localhost），测不了。';
+    return;
+  }
+  note.textContent = '正在打开前置摄像头…';
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({video: {facingMode: 'user', width: 320}, audio: false});
+    video.hidden = false;
+    video.srcObject = stream;
+    await video.play();
+    const detector = new window.FaceDetector({fastMode: true, maxDetectedFaces: 1});
+    const faces = await detector.detect(video);
+    if (!faces.length) {
+      note.textContent = '画面里没看到脸：让小朋友坐到摄像头正前方再试一次。';
+      return;
+    }
+    const box = faces[0].boundingBox;
+    const ratio = box.height / (video.videoHeight || 1);
+    const percent = Math.round(ratio * 100);
+    if (ratio > 0.55) {
+      note.textContent = `脸占画面 ${percent}%，离得太近了，往后坐一点（建议 50 厘米以上）。`;
+    } else if (ratio < 0.22) {
+      note.textContent = `脸占画面 ${percent}%，有点远，往前坐一点。`;
+    } else {
+      note.textContent = `脸占画面 ${percent}%，距离合适。`;
+    }
+  } catch (error) {
+    note.textContent = `没测成：${error.message || '摄像头没打开'}`;
+  } finally {
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+    video.srcObject = null;
+    video.hidden = true;
+  }
+}
+
+$('dist-run').addEventListener('click', runDistanceCheck);
+
 renderCaps();

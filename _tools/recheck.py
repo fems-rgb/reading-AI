@@ -9,6 +9,7 @@
   浏览器   → 只认截图文件（PNG 魔数 + 体积）与报告 JSON 的断言字段
   防御     → 现场搭一台“坏摄像头”：重定向/非图片/超大帧/超时/公网地址/rtsp
   离线     → 扫代码里的外网主机 + 问服务自己的出站审计
+  档案     → 教师端入口 + 接口自报数字与 SQLite 直查对账
   仓库     → git status、远程哈希、暂存区密钥扫描
 
 用法：
@@ -374,6 +375,21 @@ def step_browser() -> None:
         ok("讲稿音频可取", str(report.get("story_audio"))[-40:])
     else:
         bad("讲稿音频可取", str(report.get("story_audio"))[:80])
+    free_text = str(report.get("free_answer") or "")
+    if "小朋友问" in free_text and len(free_text) >= 12:
+        ok("孩子自由提问有回答", free_text.replace("\n", " ")[:60])
+    else:
+        bad("孩子自由提问有回答", f"没看到问答：{free_text[:80]!r}")
+    if report.get("free_audio_ok"):
+        ok("自由回答音频可取", str(report.get("free_audio"))[-40:])
+    else:
+        bad("自由回答音频可取", str(report.get("free_audio"))[:80])
+    after = report.get("profile_after_free") or {}
+    recent = [str(item) for item in (after.get("recent") or [])]
+    if int(after.get("free_questions") or 0) >= 1 and any("小兔子" in item for item in recent):
+        ok("提问进了阅读档案", f"档案里 {after.get('free_questions')} 条提问，最近：{recent[:1]}")
+    else:
+        bad("提问进了阅读档案", f"档案里没看到刚问的那句：{after!r}")
     ended = report.get("ended") or []
     if ended == [True, True, True, True]:
         ok("四个会话均正常结束", str(ended))
@@ -408,6 +424,91 @@ def step_browser() -> None:
     good = [shot for shot in shots if check_shot(shot, "教师端截图")]
     if shots and len(good) == len(shots):
         ok("教师端截图", f"{len(shots)} 张均有效")
+    prof = report.get("profile") or {}
+    if int(prof.get("bars") or 0) == 14 and str(prof.get("pages") or "").strip() not in ("", "–"):
+        ok("教师端阅读档案", f"{prof.get('child')}：页数 {prof.get('pages')}、绘本 {prof.get('books')}、"
+                             f"时长 {prof.get('minutes')} 分、提问 {prof.get('free')}、14 天柱状图")
+    else:
+        bad("教师端阅读档案", f"KPI 或柱状图没渲染：{prof!r}")
+
+
+# ---------------------------------------------------------------- 阅读档案
+PROFILE_FIELDS = (
+    "pages", "sessions", "books_read", "minutes", "answered", "answered_ratio",
+    "understood_yes", "understood_partial", "free_questions", "books", "daily",
+    "recent_questions", "child",
+)
+
+
+def step_profile() -> None:
+    """不信前端显示：先看入口页，再拿接口自报数字回 SQLite 直查对账。"""
+    client = teacher_client()
+    if client is None:
+        note("服务没起或口令不对，跳过阅读档案复核")
+        return
+    try:
+        page = client.get("/teacher")
+        if page.status_code == 200 and "阅读档案" in page.text:
+            ok("阅读档案入口", "教师端页面有「阅读档案」标签页")
+        else:
+            bad("阅读档案入口", f"{page.status_code}，页面里没有「阅读档案」")
+        kids = client.get("/api/teacher/children")
+        items = ((kids.json() or {}).get("items") or []) if kids.status_code == 200 else []
+        if not items:
+            note("库里还没有孩子，跳过档案对账")
+            return
+        child = items[0]
+        reply = client.get(f"/api/teacher/reading/{child['id']}")
+        if reply.status_code != 200:
+            bad("阅读档案接口", f"{reply.status_code} {reply.text[:120]}")
+            return
+        data = reply.json()
+        missing = [key for key in PROFILE_FIELDS if key not in data]
+        if missing:
+            bad("阅读档案字段", f"缺 {missing}")
+            return
+        if (data.get("child") or {}).get("id") != child["id"]:
+            bad("阅读档案孩子", f"返回的不是请求的那个：{data.get('child')}")
+        else:
+            ok("阅读档案字段", f"{child['name']}：页数 {data['pages']}、绘本 {data['books_read']}、"
+                                f"时长 {data['minutes']} 分、回应率 {data['answered_ratio']}%、"
+                                f"主动提问 {data['free_questions']}")
+        daily = data.get("daily") or []
+        horizons = {row.get("day") for row in daily if isinstance(row, dict)}
+        if all(isinstance(day, str) and len(day) == 10 for day in horizons):
+            ok("阅读档案日趋势", f"{len(daily)} 天有页数记录")
+        else:
+            bad("阅读档案日趋势", f"day 字段不像日期：{list(horizons)[:3]}")
+        loose = client.get(f"/api/teacher/reading/{child['id']}?days=9999")
+        if loose.status_code == 200:
+            ok("阅读档案天数越界", "days=9999 被收住，没有报错")
+        else:
+            bad("阅读档案天数越界", f"{loose.status_code} {loose.text[:80]}")
+        ghost = client.get("/api/teacher/reading/99999999")
+        if ghost.status_code == 404:
+            ok("阅读档案不存在就 404", "没有这个孩子时不编数据")
+        else:
+            bad("阅读档案不存在就 404", f"{ghost.status_code} {ghost.text[:80]}")
+        # 独立通道：绕开接口，直接读 SQLite 对账，口径与 db.reading_profile 一致
+        conn = sqlite3.connect(f"file:{ROOT / 'data' / 'app.db'}?mode=ro", uri=True)
+        try:
+            pages = conn.execute(
+                "SELECT COUNT(t.id) FROM turns t JOIN sessions s ON s.id=t.session_id"
+                " WHERE s.child_id=?", (child["id"],)
+            ).fetchone()[0]
+            frees = conn.execute(
+                "SELECT COUNT(*) FROM free_qas f JOIN sessions s ON s.id=f.session_id"
+                " WHERE s.child_id=?", (child["id"],)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        if int(data.get("pages") or 0) == int(pages) and int(data.get("free_questions") or 0) == int(frees):
+            ok("阅读档案数字对账", f"页数 {pages}、提问 {frees}，与库里的记录一致")
+        else:
+            bad("阅读档案数字对账", f"接口 pages={data.get('pages')}/free={data.get('free_questions')}，"
+                                     f"库 pages={pages}/free={frees}")
+    finally:
+        client.close()
 
 
 # ---------------------------------------------------------------- 防御
@@ -703,6 +804,7 @@ STEPS = {
     "defense": step_defense,
     "offline": step_offline,
     "deep": step_deep,
+    "profile": step_profile,
     "repo": step_repo,
 }
 

@@ -19,6 +19,7 @@ const connText = document.getElementById('conn-text');
 const camera = document.getElementById('camera');
 const micBtn = document.getElementById('mic-btn');
 const fsBtn = document.getElementById('fs-btn');
+const freeBtn = document.getElementById('free-btn');
 
 const HEARTBEAT_MS = 15000;
 const PONG_TIMEOUT_MS = 25000;
@@ -39,6 +40,7 @@ let analyzeTimer = null;
 let pollTimer = null;
 let renderedKey = '';     // 防止轮询模式下每 2s 重绘/重播
 let lastThumb = null;     // 最近一页的小图：提问/回答时留个画面参照，别让绘本页凭空消失
+let talkMode = 'answer';  // answer = 回答提问，free = 孩子自己提问
 
 function toast(text) {
   const el = document.getElementById('toast');
@@ -96,6 +98,37 @@ function showStory(text) {
   box.hidden = !text;
 }
 
+function showRest(text) {
+  const box = document.getElementById('rest');
+  if (!box) return;
+  box.textContent = text || '';
+  box.hidden = !text;
+}
+
+/* 孩子自己提问：借同一个输入条，只换语义；不新开一套控件，机器人上少一个要认的按钮 */
+function enterFree() {
+  if (fatal || phase === 'ended') return;
+  if (phase === 'busy') {
+    toast('等这一页看完再问');
+    return;
+  }
+  talkMode = 'free';
+  answerBar.style.display = 'flex';
+  answerInput.placeholder = '把小朋友的问题打在这里，比如：小兔子为什么跑？';
+  setTalkLabel('🎤 按住问');
+  setState('我在听你问', true);
+  if (micBtn && !micBtn.hidden) toast('按住麦克风问，或者打字');
+  else answerInput.focus();
+}
+
+function exitFree() {
+  if (talkMode !== 'free') return;
+  talkMode = 'answer';
+  answerBar.style.display = phase === 'asked' ? 'flex' : 'none';
+  answerInput.placeholder = '也可以把小朋友说的话打在这里';
+  setTalkLabel('🎤 按住说话');
+}
+
 // ---------------- 渲染 ----------------
 
 function pictureRef() {
@@ -142,6 +175,16 @@ function renderReply(data) {
   answerBar.style.display = 'none';
   answerInput.value = '';
   cancelTalk();
+  exitFree();
+}
+
+/* 孩子自由提问的回答：问题与回答一起上屏，仍然保留这一页的画面 */
+function renderFree(data) {
+  const question = data.question ? `小朋友问：${escapeHtml(data.question)}` : '（这次没听清）';
+  stage.innerHTML = askLayout(`
+    <div class="answer">${question}</div>
+    <div class="question" style="font-size:22px">${escapeHtml(data.answer || '')}</div>`);
+  choicesBox.innerHTML = '';
 }
 
 // ---------------- 连接：WS 为主，HTTP 兜底 ----------------
@@ -415,6 +458,8 @@ function handleEvent(name, data) {
     renderPicture(data);
     const read = data.read || {};
     showStory(read.text || '');
+    showRest('');
+    exitFree();
     playAudio((read.audio || {}).url, '点一下【再听一遍】听我讲这一页');
     phase = 'busy';
     setMain('快好了…', false);
@@ -443,11 +488,35 @@ function handleEvent(name, data) {
     setMain(`拍第 ${nextPage} 页`, true);
     return;
   }
+  if (name === 'free') {
+    clearAnalyzeWatch();
+    renderFree(data);
+    playAudio((data.audio || {}).url, '点一下【再听一遍】就能听到回答');
+    if (phase === 'busy' || phase === 'idle') phase = 'answered';
+    setState(phase === 'asked' ? '在听你说' : '休息中', phase === 'asked');
+    nextPage = Math.max(nextPage, 1);
+    setMain(`拍第 ${nextPage} 页`, true);
+    exitFree();
+    return;
+  }
+  if (name === 'eye_rest') {
+    clearAnalyzeWatch();
+    showRest(data.human_hint || '让眼睛歇一歇，看看窗外远处。');
+    stopAudio();
+    playAudio((data.audio || {}).url);
+    phase = phase === 'asked' ? 'asked' : 'answered';
+    setState('休息一下', false);
+    setMain(`拍第 ${nextPage} 页`, true);
+    toast(data.human_hint || '让眼睛歇一歇');
+    return;
+  }
   if (name === 'quality') {
     clearAnalyzeWatch();
     phase = 'idle';
     setState('准备中', false);
     showStory('');
+    showRest('');
+    exitFree();
     stage.innerHTML = `<div class="placeholder">${escapeHtml(data.human_hint || '再拍一次好吗？')}</div>`;
     setMain(`重拍第 ${nextPage} 页`, true);
     toast(data.human_hint || '再拍一次好吗？');
@@ -467,7 +536,9 @@ function handleEvent(name, data) {
   if (name === 'skipped') {
     clearAnalyzeWatch();
     showStory('');
+    showRest('');
     stopAudio();
+    exitFree();
     phase = 'answered';
     nextPage = (data.page_no || nextPage - 1) + 1;
     setMain(`拍第 ${nextPage} 页`, true);
@@ -477,7 +548,9 @@ function handleEvent(name, data) {
   if (name === 'teacher_talk') {
     phase = 'idle';
     showStory('');
+    showRest('');
     stopAudio();
+    exitFree();
     setState('老师来讲', false);
     setMain('我安静听', false);
     toast(data.human_hint || '老师来提问啦');
@@ -489,6 +562,7 @@ function handleEvent(name, data) {
     clearTimeout(pollTimer);
     clearAnalyzeWatch();
     showStory('');
+    showRest('');
     stopAudio();
     phase = 'ended';
     setState('共读结束', false);
@@ -615,7 +689,13 @@ function setTalkLabel(text) {
 
 async function startTalk(event) {
   if (event && event.cancelable) event.preventDefault();
-  if (fatal || phase !== 'asked' || talk) return;
+  if (fatal || talk) return;
+  if (talkMode === 'free') {
+    if (phase === 'busy' || phase === 'ended') return;
+  } else if (phase !== 'asked') {
+    toast('等机器人提问后再回答，或者点【🙋 问一句】');
+    return;
+  }
   if (!talkSupported()) {
     toast('这台设备没有可用的麦克风，用文字或点图片回答');
     return;
@@ -628,7 +708,7 @@ async function startTalk(event) {
     return;
   }
   if (micBtn) micBtn.classList.add('recording');
-  setTalkLabel('松开发送 · 0s');
+  setTalkLabel(talkMode === 'free' ? '松开提问 · 0s' : '松开发送 · 0s');
   setState('在听你说…', true);
   if (navigator.vibrate) navigator.vibrate(20);
 }
@@ -644,7 +724,7 @@ async function stopTalk(event) {
   const seconds = (Date.now() - job.startedAt) / 1000;
   talk = null;
   if (micBtn) micBtn.classList.remove('recording');
-  setTalkLabel('🎤 按住说话');
+  setTalkLabel(talkMode === 'free' ? '🎤 按住问' : '🎤 按住说话');
   job.recorder.stop();
   if (seconds < 0.4) {
     job.recorder.result().catch(() => {});
@@ -672,29 +752,34 @@ function cancelTalk() {
 }
 
 async function sendAudio(blob) {
+  const free = talkMode === 'free';
   setState('我在想…', true);
-  setMain('我在听…', false);
+  setMain(free ? '我在听你问…' : '我在听…', false);
   answerBar.style.display = 'none';
   if (transport === 'http') {
     const form = new FormData();
     form.append('token', R.token);
     form.append('file', blob, 'answer.wav');
+    const url = free
+      ? `/api/device/${R.sessionId}/free-audio`
+      : `/api/device/${R.sessionId}/listen`;
     try {
-      const response = await fetch(`/api/device/${R.sessionId}/listen`, {method: 'POST', body: form});
+      const response = await fetch(url, {method: 'POST', body: form});
       if (response.status === 403) return shutDown(4401);
       if (response.status === 404) return shutDown(4404);
       if (!response.ok) throw new Error('没传成功');
+      if (free) exitFree();
       pollSoon(300);
     } catch (error) {
-      toast('这句没传成功，再说一次');
+      toast(free ? '这个问题没传成功，再问一次' : '这句没传成功，再说一次');
       answerBar.style.display = 'flex';
       setMain('在听你说…', false);
     }
     return;
   }
   const base64 = await blobToBase64(blob);
-  if (!base64 || !submit({type: 'audio', audio: base64})) {
-    toast('这段没录上，再说一次');
+  if (!base64 || !submit({type: free ? 'free' : 'audio', audio: base64})) {
+    toast(free ? '这段没录上，再问一次' : '这段没录上，再说一次');
     answerBar.style.display = 'flex';
     setMain('在听你说…', false);
   }
@@ -726,6 +811,8 @@ if (micBtn) {
   });
 }
 
+if (freeBtn) freeBtn.addEventListener('click', enterFree);
+
 if (fsBtn) {
   fsBtn.addEventListener('click', () => {
     if (!window.Device) return;
@@ -750,8 +837,14 @@ answerInput.addEventListener('keydown', (event) => {
 function submitAnswer() {
   const text = answerInput.value.trim();
   if (!text) { toast('先说一句吧'); return; }
-  submit({type: 'answer', text});
   answerInput.value = '';
+  if (talkMode === 'free') {
+    submit({type: 'free', text});
+    setState('我在想…', true);
+    exitFree();
+    return;
+  }
+  submit({type: 'answer', text});
 }
 
 document.querySelectorAll('[data-control]').forEach((button) => {
