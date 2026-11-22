@@ -19,7 +19,7 @@
     <button data-key="clear">清空</button><button data-key="0">0</button><button data-key="back">←</button>
     <button class="wide" data-key="ok" style="background:var(--primary);color:#fff;border:none">进入</button>
   </div>
-  <p class="small muted" style="margin-top:14px">口令在 <span class="mono">.env</span> 的 TEACHER_PIN（6 位）/ ADMIN_PIN（8 位）中配置，可以直接粘贴。</p>
+  <p class="small muted" style="margin-top:14px">口令在 <span class="mono">.env</span> 的 TEACHER_PIN / ADMIN_PIN 中配置，位数以你配的为准；输入时下面会显示「已输入 N 位」，也可以直接粘贴。</p>
 </div>
 {% endblock %}
 {% block scripts %}
@@ -46,7 +46,7 @@
       location.href = '/teacher';
     } catch (error) {
       const message = error.message && error.message.includes('口令不对')
-        ? `口令不对（已输入 ${tried} 位）。核对 .env 里的 TEACHER_PIN / ADMIN_PIN`
+        ? `口令不对（这次只收到 ${tried} 位）。口令位数以 .env 的 TEACHER_PIN / ADMIN_PIN 为准，位数不够会一直判错`
         : error.message;
       toast(message);
       pin = '';
